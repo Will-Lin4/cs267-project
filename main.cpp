@@ -81,8 +81,13 @@ int main(int argc, char** argv) {
         std::cout << "Options:" << std::endl;
         std::cout << "-h: see this help" << std::endl;
         std::cout << "-n <int>: set vector length" << std::endl;
+        std::cout << "-d: run direct allreduce" << std::endl;
         return 0;
     }
+    
+    bool direct_allreduce = false;
+    if (find_arg_idx(argc, argv, "-d") >= 0)
+        direct_allreduce = true;
 
     // Init MPI
     int num_procs, rank;
@@ -100,7 +105,11 @@ int main(int argc, char** argv) {
     
     // Algorithm
     auto start_time = std::chrono::steady_clock::now();
-    sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector);
+    if (direct_all_reduce) {
+        direct_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector);
+    } else {
+        sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector);
+    }
     auto end_time = std::chrono::steady_clock::now();
 
     bool correct = test_dummy_reduced_vector(num_procs, vector_len,
