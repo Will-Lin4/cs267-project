@@ -1,8 +1,10 @@
 #include "common.h"
+#include <math.h>
 #include <set>
 
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
+#define EPSILON 0.05
 
 // =================
 // Helper Functions
@@ -14,19 +16,66 @@ int mod(int a, int b) {
 	return res < 0 ? res+b : res;
 }
 
-std::map<int, std::set<int>> compute_partition_chunks(const int num_procs, const int vector_len) {
-	std::map<int, std::set<int>> chunks;
+long factorial(const int n) {
+    long f = 1;
+    for (int i = 2; i <= n; i++)
+        f *= i;
+    return f;
+}
 
-	const int chunk_size = vector_len / num_procs;
-	int idx;
-	for (int rank = 0; rank < num_procs; rank++) {
-		for (idx = rank*chunk_size; idx < (rank+1)*chunk_size; idx++) {
-			chunks[rank].insert(idx);
+/* Partitions {0,...,vector_len-1} into num_procs subsets of roughly equal mass
+   according to the probability mass function specified by the distribution */
+std::map<int, std::set<int>> compute_partition_chunks(const int num_procs, const int my_rank, const int vector_len,
+													  const char* distribution, const double dist_param) {
+	auto pmf = [&](const int x, const char* distribution, const double dist_param) {
+		if (!strcmp(distribution, "uniform")) {
+			return 1/(double)dist_param;
+		} else if (!strcmp(distribution, "geometric")) {
+			return pow(1-dist_param, x-1) * dist_param;
+		} else if (!strcmp(distribution, "poisson")) {
+			return pow(dist_param, x) * exp(-dist_param) / factorial(x);
+		}
+		return (double)-1;
+    };
+
+	double total_mass = 0;
+	for (int i = 0; i < vector_len; i++) {
+		total_mass += pmf(i, distribution, dist_param);
+	}
+
+	int rank = 0;
+	double mass = 0;
+	const double uniform_mass = 1/(double)num_procs;
+	std::map<int, std::set<int>> chunks;
+	for (int idx = 0; idx < vector_len; idx++) {
+		chunks[rank].insert(idx);
+
+		/* Assign indices to chunk until cumulative mass
+		   is within EPSILON of (ideal) uniform mass */
+		mass += pmf(idx, distribution, dist_param) / total_mass;
+		if (mass >= uniform_mass - EPSILON) {
+			rank++;
+			mass = 0;
+		}
+
+		// If no more processors, assign remaining indices to last chunk
+		if (rank == num_procs) {
+			for (int i = idx+1; i < vector_len; i++) {
+				chunks[num_procs-1].insert(i);
+			}
+			break;
 		}
 	}
-	for (; idx < vector_len; idx++) { // leftover incides to final processor
-		chunks[num_procs-1].insert(idx);
-	}
+
+	// if (my_rank == 0) {
+	// 	for (const auto& [rank, chunk] : chunks) {
+	// 		std::cout << "Rank " << rank << ": ( ";
+	// 		for (auto i : chunk) {
+	// 			std::cout << i << ' ';
+	// 		}
+	// 		std::cout << ")\n";
+	// 	}
+	// }
 
 	return chunks;
 }
@@ -121,6 +170,8 @@ void all_gather(const int num_procs, const int rank, const int vector_len,
 	}
 	delete send_data;
 
+	MPI_Barrier(MPI_COMM_WORLD);
+
 	// Read reduced chunks from all other processors
 	int* recv_data = new int[2*vector_len + 1];
 	for (int dist = 1; dist < num_procs; dist++) {
@@ -137,8 +188,9 @@ void all_gather(const int num_procs, const int rank, const int vector_len,
 }
 
 void sparse_all_reduce(const int num_procs, const int rank, const int vector_len,
-					   const std::map<int, int>& in_vector, std::map<int, int>& reduced_vector) {
-	std::map<int, std::set<int>> chunks = compute_partition_chunks(num_procs, vector_len);
+					   const std::map<int, int>& in_vector, std::map<int, int>& reduced_vector,
+					   const char* distribution, const double dist_param) {
+	std::map<int, std::set<int>> chunks = compute_partition_chunks(num_procs, rank, vector_len, distribution, dist_param);
 	std::map<int, int> reduced_chunk;
 	reduce_scatter(num_procs, rank, vector_len, in_vector, reduced_chunk, chunks);
 	MPI_Barrier(MPI_COMM_WORLD);

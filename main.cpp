@@ -1,7 +1,6 @@
 #include "common.h"
 #include <chrono>
 #include <random>
-#include <cstring>
 
 // =================
 // Helper Functions
@@ -27,7 +26,7 @@ int find_int_arg(int argc, char** argv, const char* option, int default_value) {
 	return default_value;
 }
 
-float find_float_arg(int argc, char** argv, const char* option, float default_value) {
+double find_double_arg(int argc, char** argv, const char* option, double default_value) {
 	int iplace = find_arg_idx(argc, argv, option);
 
 	if (iplace >= 0 && iplace < argc - 1) {
@@ -47,10 +46,12 @@ char* find_string_arg(int argc, char** argv, const char* option, char* default_v
 	return default_value;
 }
 
-float find_distribution_parameter(int argc, char** argv, const char* distribution) {
-	float dist_param = find_float_arg(argc, argv, "-p", -1);
+double find_distribution_parameter(int argc, char** argv, const int vector_len, const char* distribution) {
+	double dist_param = find_double_arg(argc, argv, "-p", -1);
 
-	if (!strcmp(distribution, "geometric")) {
+	if (!strcmp(distribution, "uniform")) {
+		if (dist_param < 1) dist_param = vector_len;
+	} else if (!strcmp(distribution, "geometric")) {
 		if (dist_param < 0 || dist_param > 1) dist_param = 0.5;
 	} else if (!strcmp(distribution, "poisson")) {
 		if (dist_param < 0) dist_param = 4;
@@ -60,13 +61,13 @@ float find_distribution_parameter(int argc, char** argv, const char* distributio
 }
 
 /* Generates sparse vector according to specified sparsity and distribution */
-void generate_vector(std::map<int, int>& vector, const int vector_len, const int num_procs, const int rank,
-					 const int random_seed, const float sparsity, const char* distribution, const float dist_param) {
+int generate_vector(std::map<int, int>& vector, const int vector_len, const int num_procs, const int rank,
+					const int random_seed, const double sparsity, const char* distribution, const double dist_param) {
 	std::mt19937 tmp(random_seed);
 	for (int i = 0; i < rank; i++) tmp(); // so that different processors get different starting vectors
 	std::mt19937 gen(tmp());
 
-	std::uniform_int_distribution<> uniform(0, vector_len-1);
+	std::uniform_int_distribution<> uniform(0, dist_param-1);
 	std::geometric_distribution<> geometric(dist_param);
 	std::poisson_distribution<> poisson(dist_param);
 
@@ -76,13 +77,15 @@ void generate_vector(std::map<int, int>& vector, const int vector_len, const int
 		if (!strcmp(distribution, "uniform")) idx = uniform(gen);
 		else if (!strcmp(distribution, "geometric")) idx = geometric(gen);
 		else if (!strcmp(distribution, "poisson")) idx = poisson(gen);
-		else { std::cerr << "Distribution '" << distribution << "' not found\n"; break; }
+		else { std::cerr << "Distribution '" << distribution << "' not found\n"; return -1; }
 
 		if (!vector.count(idx)) {
 			vector.emplace(idx, 1);
 			nz_count++;
 		}
 	}
+
+	return 0;
 }
 
 /* Displays dense represenation of sparse vector */
@@ -101,6 +104,7 @@ void display_sparse_vector(std::map<int, int>& vector, const int vector_len) {
 // ==============
 // Main Function
 // ==============
+
 int main(int argc, char** argv) {
 	// Init MPI
 	int num_procs, rank;
@@ -116,30 +120,30 @@ int main(int argc, char** argv) {
 			std::cout << "-v: verbose output" << std::endl;
 			std::cout << "-r <int>: set random seed" << std::endl;
 			std::cout << "-n <int>: set vector length" << std::endl;
-			std::cout << "-s <float>: set sparsity" << std::endl;
+			std::cout << "-s <double>: set sparsity" << std::endl;
 			std::cout << "-d <string>: set distribution (UNIFORM, geometric, poisson)" << std::endl;
-			std::cout << "-p <float>: set distribution parameter" << std::endl;
+			std::cout << "-p <double>: set distribution parameter" << std::endl;
 		}
-		MPI_Finalize();
 		return 0;
 	}
 
 	std::random_device rd;
 	int random_seed = find_int_arg(argc, argv, "-r", rd());
 	int vector_len = find_int_arg(argc, argv, "-n", 1000);
-	float sparsity = find_float_arg(argc, argv, "-s", 0.3);
+	double sparsity = find_double_arg(argc, argv, "-s", 0.3);
 	char* distribution = find_string_arg(argc, argv, "-d", (char*) "uniform");
-	float dist_param = find_distribution_parameter(argc, argv, distribution);
+	double dist_param = find_distribution_parameter(argc, argv, vector_len, distribution);
 
 	std::map<int, int> in_vector;
 	std::map<int, int> reduced_vector;
 
 	// Generate input vector
-	generate_vector(in_vector, vector_len, num_procs, rank, random_seed, sparsity, distribution, dist_param);
+	if (generate_vector(in_vector, vector_len, num_procs, rank, random_seed, sparsity, distribution, dist_param))
+		return -1;
 
 	// Algorithm
 	auto start_time = std::chrono::steady_clock::now();
-	sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector);
+	sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector, distribution, dist_param);
 	auto end_time = std::chrono::steady_clock::now();
 
 	// Output results
