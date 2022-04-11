@@ -1,10 +1,7 @@
 #include "common.h"
 #include <chrono>
-#include <cstring>
-#include <iostream>
-#include <map>
 #include <random>
-#include <mpi.h>
+#include <cstring>
 
 // =================
 // Helper Functions
@@ -104,7 +101,6 @@ void display_sparse_vector(std::map<int, int>& vector, const int vector_len) {
 // ==============
 // Main Function
 // ==============
-
 int main(int argc, char** argv) {
 	// Init MPI
 	int num_procs, rank;
