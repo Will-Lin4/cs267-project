@@ -10,44 +10,44 @@
 // Helper Functions
 // =================
 
-// Command Line Option Processing
+/* Command Line Option Processing */
 int find_arg_idx(int argc, char** argv, const char* option) {
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], option) == 0) {
-            return i;
-        }
-    }
-    return -1;
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], option) == 0) {
+			return i;
+		}
+	}
+	return -1;
 }
 
 int find_int_arg(int argc, char** argv, const char* option, int default_value) {
-    int iplace = find_arg_idx(argc, argv, option);
+	int iplace = find_arg_idx(argc, argv, option);
 
-    if (iplace >= 0 && iplace < argc - 1) {
-        return std::stoi(argv[iplace + 1]);
-    }
+	if (iplace >= 0 && iplace < argc - 1) {
+		return std::stoi(argv[iplace + 1]);
+	}
 
-    return default_value;
+	return default_value;
 }
 
 float find_float_arg(int argc, char** argv, const char* option, float default_value) {
-    int iplace = find_arg_idx(argc, argv, option);
+	int iplace = find_arg_idx(argc, argv, option);
 
-    if (iplace >= 0 && iplace < argc - 1) {
-        return std::stof(argv[iplace + 1]);
-    }
+	if (iplace >= 0 && iplace < argc - 1) {
+		return std::stof(argv[iplace + 1]);
+	}
 
-    return default_value;
+	return default_value;
 }
 
 char* find_string_arg(int argc, char** argv, const char* option, char* default_value) {
-    int iplace = find_arg_idx(argc, argv, option);
+	int iplace = find_arg_idx(argc, argv, option);
 
-    if (iplace >= 0 && iplace < argc - 1) {
-        return argv[iplace + 1];
-    }
+	if (iplace >= 0 && iplace < argc - 1) {
+		return argv[iplace + 1];
+	}
 
-    return default_value;
+	return default_value;
 }
 
 float find_distribution_parameter(int argc, char** argv, const char* distribution) {
@@ -62,42 +62,13 @@ float find_distribution_parameter(int argc, char** argv, const char* distributio
 	return dist_param;
 }
 
-// Initializes a vector with the values [rank + 1, rank + 1, ..., rank + 1]
-void init_dummy_vector(const int num_procs, const int rank,
-                       const int vector_len, std::map<int, int>& in_vector) {
-    for (int i = 0; i < vector_len; i++) {
-        in_vector.emplace(i, rank + 1);
-    }
-}
-
-bool test_dummy_reduced_vector(const int num_procs,
-                               const int vector_len,
-                               const std::map<int, int>& reduced_vector) {
-    int expected_val = num_procs * (num_procs + 1) / 2;
-    if (reduced_vector.size() != vector_len) {
-        return false;
-    }
-
-    int i = 0;
-    for (const auto& elem_it : reduced_vector) {
-        if (elem_it.first != i) {
-            return false;
-        }
-
-        if (elem_it.second != expected_val) {
-            return false;
-        }
-
-        i++;
-    }
-
-    return true;
-}
-
+/* Generates sparse vector according to specified sparsity and distribution */
 void generate_vector(std::map<int, int>& vector, const int vector_len, const int num_procs, const int rank,
-					 const float sparsity, const char* distribution, const float dist_param) {
-	std::random_device rd;
-	std::mt19937 gen(rd());
+					 const int random_seed, const float sparsity, const char* distribution, const float dist_param) {
+	std::mt19937 tmp(random_seed);
+	for (int i = 0; i < rank; i++) tmp(); // so that different processors get different starting vectors
+	std::mt19937 gen(tmp());
+
 	std::uniform_int_distribution<> uniform(0, vector_len-1);
 	std::geometric_distribution<> geometric(dist_param);
 	std::poisson_distribution<> poisson(dist_param);
@@ -114,12 +85,13 @@ void generate_vector(std::map<int, int>& vector, const int vector_len, const int
 			vector.emplace(idx, 1);
 			nz_count++;
 		}
-    }
+	}
 }
 
+/* Displays dense represenation of sparse vector */
 void display_sparse_vector(std::map<int, int>& vector, const int vector_len) {
 	std::cout << "[ ";
-    for (int i = 0; i < vector_len; i++) {
+	for (int i = 0; i < vector_len; i++) {
 		if (vector.count(i)) {
 			std::cout << vector[i] << ' ';
 		} else {
@@ -134,49 +106,62 @@ void display_sparse_vector(std::map<int, int>& vector, const int vector_len) {
 // ==============
 
 int main(int argc, char** argv) {
-    // Parse Args
-    if (find_arg_idx(argc, argv, "-h") >= 0) {
-        std::cout << "Options:" << std::endl;
-        std::cout << "-h: see this help" << std::endl;
-        std::cout << "-n <int>: set vector length" << std::endl;
-        return 0;
-    }
+	// Init MPI
+	int num_procs, rank;
+	MPI_Init(&argc, &argv);
+	MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // Init MPI
-    int num_procs, rank;
-    MPI_Init(&argc, &argv);
-    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	// Parse Args
+	if (find_arg_idx(argc, argv, "-h") >= 0) {
+		if (rank == 0) {
+			std::cout << "Options:" << std::endl;
+			std::cout << "-h: see this help" << std::endl;
+			std::cout << "-v: verbose output" << std::endl;
+			std::cout << "-r <int>: set random seed" << std::endl;
+			std::cout << "-n <int>: set vector length" << std::endl;
+			std::cout << "-s <float>: set sparsity" << std::endl;
+			std::cout << "-d <string>: set distribution (UNIFORM, geometric, poisson)" << std::endl;
+			std::cout << "-p <float>: set distribution parameter" << std::endl;
+		}
+		MPI_Finalize();
+		return 0;
+	}
 
-    int vector_len = find_int_arg(argc, argv, "-n", 1000);
-    float sparsity = find_float_arg(argc, argv, "-s", 0.3);
-    char* distribution = find_string_arg(argc, argv, "-d", (char*) "uniform");
-    float dist_param = find_distribution_parameter(argc, argv, distribution);
+	std::random_device rd;
+	int random_seed = find_int_arg(argc, argv, "-r", rd());
+	int vector_len = find_int_arg(argc, argv, "-n", 1000);
+	float sparsity = find_float_arg(argc, argv, "-s", 0.3);
+	char* distribution = find_string_arg(argc, argv, "-d", (char*) "uniform");
+	float dist_param = find_distribution_parameter(argc, argv, distribution);
 
-    std::map<int, int> in_vector;
-    std::map<int, int> reduced_vector;
+	std::map<int, int> in_vector;
+	std::map<int, int> reduced_vector;
 
-    // Generate input vector
-    generate_vector(in_vector, vector_len, num_procs, rank, sparsity, distribution, dist_param);
-    //display_sparse_vector(in_vector, vector_len);
-    
-    // Algorithm
-    auto start_time = std::chrono::steady_clock::now();
-    sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector);
-    auto end_time = std::chrono::steady_clock::now();
+	// Generate input vector
+	generate_vector(in_vector, vector_len, num_procs, rank, random_seed, sparsity, distribution, dist_param);
 
-    bool correct = test_dummy_reduced_vector(num_procs, vector_len,
-                                             reduced_vector);
-    if (!correct) {
-        std::cout << "Incorrect result on Rank: <" << rank << ">" << std::endl; 
-    } else if (rank == 0) {
-        std::chrono::duration<double> diff = end_time - start_time;
-        double seconds = diff.count();
+	// Algorithm
+	auto start_time = std::chrono::steady_clock::now();
+	sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector);
+	auto end_time = std::chrono::steady_clock::now();
 
-        std::cout << "Length: <" << vector_len << ">"
-                  << ", "
-                  << "Time: <" << seconds << "s>" << std::endl; 
-    }
+	// Output results
+	if (find_arg_idx(argc, argv, "-v") >= 0) {
+		display_sparse_vector(in_vector, vector_len);
+		if (rank == num_procs-1) {
+			for (int i = 0; i < 2*vector_len + 3; i++) {
+				std::cout << '-';
+			}
+			std::cout << '\n';
+			display_sparse_vector(reduced_vector, vector_len);
+			std::cout << '\n';
+		}
+	}
+	if (rank == num_procs-1) {
+		std::chrono::duration<double> diff = end_time - start_time;
+		std::cout << "Allreduce Time: " << diff.count() << " sec\n";
+	}
 
-    MPI_Finalize();
+	MPI_Finalize();
 }
