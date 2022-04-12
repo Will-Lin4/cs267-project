@@ -23,6 +23,13 @@ void map_to_vector(const std::map<int, int>& m, std::vector<int>& v) {
 
 }
 
+/* Populates a map with the contents of a vector */
+void vector_to_map(std::map<int, int>& m, std::vector<int>& v) {
+    for (int i=0; i<v.size(); ++i) {
+        m[i] = v[i];
+    }
+}
+
 /* Populates a map with the contents of an array */
 void array_to_map(int *v, int n, std::map<int, int>& m) {
     
@@ -75,6 +82,71 @@ void print_map(std::map<int, int>& v, int r) {
         std::cout << i->second << ", ";
     }
     std::cout << "\n";
+}
+
+
+/* RECURSIVE DOUBLING */
+
+/* Main recursive doubling operation */
+void do_recursive_double(std::vector<int>& send_data, int *recv_data, 
+                         const int rank, const int num_procs, const int n,
+                         const int limit, const int distance) {
+    
+    MPI_Request *requests = new MPI_Request[2];
+    MPI_Request r1;
+    MPI_Request r2;
+    requests[0] = r1;
+    requests[1] = r2;
+    
+    //Send and receive requests
+    if (rank > limit) {
+        MPI_Isend(send_data.data(), n, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[0]);
+        MPI_Irecv(recv_data, n, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[1]);
+    } else {
+        MPI_Isend(send_data.data(), n, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[0]);
+        MPI_Irecv(recv_data, n, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[1]);
+    }
+    MPI_Waitall(2, requests, MPI_STATUSES_IGNORE);
+    
+    //operate on receieved data -- TODO -- write new version of operate that works with an array and a vector
+    operate(send_data, recv_data);
+    
+    delete requests
+}
+
+/* Recursive doubling on the sparse vector */
+void recursive_double_vector(std::map<int, int>& vector, const int rank, const int num_procs, const int n) {
+    int distance = 1;
+    int limit = num_procs/2;
+    std::vector<int> send_data;
+    int *recv_data = new int[n];
+    
+    map_to_vector(vector, send_data);
+    
+    //Main loop
+    while (distance < limit) {
+        do_recursive_double(send_data, recv_data, rank, num_procs, n, limit, distance);
+        distance *= 2;
+        //TODO -- clear recv_data? I don't think this needs to happen because MPI would just overwrite it
+    }
+    
+    //Copy reduced vector into map
+    vector_to_map(send_data, vector);
+    delete recv_data;
+}
+
+/* Recursive doubling on paritioned chunks */
+void recursive_double_vector(std::vector<int>& vector, const int rank, const int num_procs, const int n) {
+    int distance = 1;
+    int limit = num_procs/2;
+    int *recv_data = new int[n];
+    //Main loop
+    while (distance < limit) {
+        do_recursive_double(vector, recv_data, rank, num_procs, n, limit, distance);
+        distance *= 2;
+        //TODO -- clear recv_data? I don't think this needs to happen because MPI would just overwrite it
+    }
+    
 }
 
 /* Direct allreduce */
