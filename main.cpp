@@ -123,6 +123,7 @@ int main(int argc, char** argv) {
 			std::cout << "-s <double>: set sparsity" << std::endl;
 			std::cout << "-d <string>: set distribution (UNIFORM, geometric, poisson)" << std::endl;
 			std::cout << "-p <double>: set distribution parameter" << std::endl;
+			std::cout << "-rd: activate recursive doubling" << std::endl;
 		}
 		return 0;
 	}
@@ -143,7 +144,11 @@ int main(int argc, char** argv) {
 
 	// Algorithm
 	auto start_time = std::chrono::steady_clock::now();
-	sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector, distribution, dist_param);
+	if (find_arg_idx(argc, argv, "-rd")>=0) {
+		recursive_double(in_vector, reduced_vector, num_procs, rank, vector_len);
+	} else {
+		sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector, distribution, dist_param);
+	}
 	auto end_time = std::chrono::steady_clock::now();
 
 	// Output results
