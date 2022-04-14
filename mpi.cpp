@@ -1,17 +1,21 @@
 #include "common.h"
-#include <mpi.h>
-#include <map>
+#include <math.h>
 #include <vector>
-#include <fstream>
-#include <iostream>
-/*
-* HELPER FUNCTIONS
-*/
 
-/* modulus operator without a negative output */
-int mod(int a, int b) {
-    int ret = a%b; 
-    return ret>=0? ret: ret+b; 
+#define TAG_REDUCE_SCATTER 0
+#define TAG_ALL_GATHER 1
+#define EPSILON 0.05 // TODO: determine optimal value for epsilon
+
+// =================
+// Helper Functions
+// =================
+
+/* Modulus operator without a negative output */
+long factorial(const int n) {
+    long f = 1;
+    for (int i = 2; i <= n; i++)
+        f *= i;
+    return f;
 }
 
 /* Populates a vector with the contents of a map */
@@ -49,46 +53,62 @@ void copy_vector(const std::map<int, int>& in_vector, std::map<int, int>& reduce
 
 }
 
-/* sums local_data and recv_data, writing the result to local_data */
-void operate(std::map<int, int>& local_data, std::map<int, int>& recv_data) {
+/* Partitions {0,...,vector_len-1} into num_procs subsets of roughly equal mass
+   according to the probability mass function specified by the distribution */
+std::vector<int> compute_partition_chunks(const int num_procs, int &num_active_procs, const int my_rank, const int vector_len,
+										  const char* distribution, const double dist_param) {
+	auto pmf = [&](const int x, const char* distribution, const double dist_param) {
+		if (!strcmp(distribution, "uniform")) {
+			return 1/(double)dist_param;
+		} else if (!strcmp(distribution, "geometric")) {
+			return pow(1-dist_param, x-1) * dist_param;
+		} else if (!strcmp(distribution, "poisson")) {
+			return pow(dist_param, x) * exp(-dist_param) / factorial(x);
+		}
+		return (double)-1;
+    };
 
-    for (auto i = recv_data.begin(); i != recv_data.end(); ++i) {
-        local_data[i->first] += i->second;
-    }
+	double total_mass = 0;
+	for (int i = 0; i < vector_len; i++) {
+		total_mass += pmf(i, distribution, dist_param);
+	}
 
+	int rank = 1;
+	double mass = 0;
+	const double uniform_mass = 1/(double)num_procs;
+	std::vector<int> chunks; // chunks[i] is first index of processor i's chunk
+	chunks.push_back(0);
+	for (int idx = 0; idx < vector_len-1; idx++) {
+		/* Assign indices to chunk until cumulative probability mass
+		   is at least within EPSILON of (ideal) uniform mass */
+		mass += pmf(idx, distribution, dist_param) / total_mass;
+		if (mass >= uniform_mass - EPSILON) {
+			chunks.push_back(idx+1);
+			rank++; mass = 0;
+		}
+		if (rank == num_procs)
+			break; // stop after last processor's chunk is determined
+	}
+	chunks.push_back(vector_len); // for convenience, so chunks[i+1] always exists
+	num_active_procs = rank;
+
+	// if (my_rank == 0) {
+	// 	std::cout << "( ";
+	// 	for (int i = 0; i < chunks.size(); i++) {
+	// 		std::cout << chunks[i] << ' ';
+	// 	}
+	// 	std::cout << ")\n";
+	// }
+
+	return chunks;
 }
 
-/* Halves the input map */
-void halve(std::map<int, int> m, bool odd) {
-    int limit = m.size()/2;
-    int cnt = 0;
-    if (odd) { //first half 
-        for (std::map<int, int>::iterator i = m.begin(); cnt < limit; ++i) {
-            m.erase(i);
-            cnt++;
-        }
-    } else { //second half
-        for (std::map<int, int>::iterator i = m.begin(); i != m.end(); ++i) {
-            if (cnt>=limit)
-                m.erase(i);
-        }
-    }
-}
-
-/* Prints the input map */
-void print_map(std::map<int, int>& v, int r) {
-    std::cout << "Processor " << r << "\n";
-    for (auto i = v.begin(); i != v.end(); ++i) {
-        std::cout << i->second << ", ";
-    }
-    std::cout << "\n";
-}
-
-
-/* RECURSIVE DOUBLING */
+// ===================
+// Recursive Doubling
+// ===================
 
 /* Main recursive doubling operation */
-void do_recursive_double(std::vector<int>& send_data, int *recv_data, 
+void do_recursive_double(std::map<int, int>& vector, int *recv_data, 
                          const int rank, const int num_procs, const int n,
                          const int limit, const int distance) {
     
@@ -97,112 +117,84 @@ void do_recursive_double(std::vector<int>& send_data, int *recv_data,
     MPI_Request r2;
     requests[0] = r1;
     requests[1] = r2;
-    
+
+	//Populate send_data
+	std::vector<int> send_data;
+	send_data.resize(n*2);
+    int idx = 0;
+
+	for (auto i = vector.begin(); i != vector.end(); ++i) {
+		send_data[idx] = i->first; //index
+		send_data[idx+1] = i->second; //value
+		idx+=2;
+	}
+
     //Send and receive requests
-    if (rank > limit) {
-        MPI_Isend(send_data.data(), n, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[0]);
-        MPI_Irecv(recv_data, n, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[1]);
+    if ( ((rank + 1) % (distance * 2)) <= distance && ((rank + 1) % (distance * 2)) ) { 
+		///std::cout << "Rank " << rank << " sending to process " << rank+distance << std::endl;
+        MPI_Isend(send_data.data(), n*2, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[0]);
+		//std::cout << "Rank " << rank << " sending to process " << rank-distance << std::endl;
+		//std::cout << "Rank " << rank << " receiving from process " << rank+distance << std::endl;
+        MPI_Irecv(recv_data, n*2, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[1]);
+		//std::cout << "Rank " << rank << " receiving from process " << rank-distance << std::endl;
     } else {
-        MPI_Isend(send_data.data(), n, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[0]);
-        MPI_Irecv(recv_data, n, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[1]);
+		//std::cout << "Rank " << rank << " sending to process " << rank-distance << std::endl;
+        MPI_Isend(send_data.data(), n*2, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[0]);
+		//std::cout << "Rank " << rank << " sending to process " << rank+distance << std::endl;
+		//std::cout << "Rank " << rank << " receiving from process " << rank-distance << std::endl;
+        MPI_Irecv(recv_data, n*2, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[1]);
+		//std::cout << "Rank " << rank << " receiving from process " << rank+distance << std::endl;
     }
     MPI_Waitall(2, requests, MPI_STATUSES_IGNORE);
     
-    //operate on receieved data -- TODO -- write new version of operate that works with an array and a vector
-    operate(send_data, recv_data);
+    //operate on receieved data
+	for (int i = 0; i < n*2; i+=2) {
+		vector[recv_data[i]] += recv_data[i+1];
+	}
     
-    delete requests
+    delete requests;
 }
 
-/* Recursive doubling on the sparse vector */
-void recursive_double_vector(std::map<int, int>& vector, const int rank, const int num_procs, const int n) {
+
+/* Recursive doubling loop */
+void recursive_double(std::map<int, int>& in_vector, 
+					  std::map<int, int>& reduced_vector, const int num_procs, 
+					  const int rank, const int vector_len) {
+
     int distance = 1;
     int limit = num_procs/2;
-    std::vector<int> send_data;
-    int *recv_data = new int[n];
-    
-    map_to_vector(vector, send_data);
-    
+    int *recv_data = new int[vector_len*2]; //*2 because it needs to fit the indices as well
+
     //Main loop
-    while (distance < limit) {
-        do_recursive_double(send_data, recv_data, rank, num_procs, n, limit, distance);
+    while (distance <= limit) {
+        do_recursive_double(in_vector, recv_data, rank, num_procs, vector_len, limit, distance);
         distance *= 2;
-        //TODO -- clear recv_data? I don't think this needs to happen because MPI would just overwrite it
     }
-    
-    //Copy reduced vector into map
-    vector_to_map(send_data, vector);
-    delete recv_data;
-}
+	
+	//Copy to reduced vector
+    for (auto i = in_vector.begin(); i != in_vector.end(); ++i) {
+		reduced_vector[i->first] = i->second;
+	}
 
-/* Recursive doubling on paritioned chunks */
-void recursive_double_vector(std::vector<int>& vector, const int rank, const int num_procs, const int n) {
-    int distance = 1;
-    int limit = num_procs/2;
-    int *recv_data = new int[n];
-    //Main loop
-    while (distance < limit) {
-        do_recursive_double(vector, recv_data, rank, num_procs, n, limit, distance);
-        distance *= 2;
-        //TODO -- clear recv_data? I don't think this needs to happen because MPI would just overwrite it
-    }
-    
-}
-
-/* Direct allreduce */
-
-/* Main operation */
-void do_layer(std::map<int, int>& data, const std::map<int, int>& in_vector, const int dist, const int rank, const int num_procs, const int n) {
-    
-    MPI_Request *requests = new MPI_Request[2];
-    MPI_Request r1;
-    MPI_Request r2;
-    requests[0] = r1;
-    requests[1] = r2;
-
-    std::map<int, int> recv_map;
-    int *recv_data = new int[n]; 
-
-    //Setup send data
-    std::vector<int> send_data;
-    send_data.resize(n);
-    map_to_vector(in_vector, send_data);
-
-    //Send and receive data
-    int dest;
-    dest = (rank+dist)%num_procs;
-    MPI_Isend(send_data.data(), n, MPI_INT, dest, NULL, MPI_COMM_WORLD, &requests[0]);
-    //std::cout << "Processor " << rank << " sending to processor " << dest << "\n";
-    dest = mod(rank-dist, num_procs);
-    //std::cout << "Processor " << rank << " receiving from processor " << dest << "\n";
-    MPI_Irecv(recv_data, n, MPI_INT, dest, NULL, MPI_COMM_WORLD, &requests[1]);
-    MPI_Waitall(2, requests, MPI_STATUSES_IGNORE);
-
-    //Operate on received data
-    array_to_map(recv_data, n, recv_map);
-    operate(data, recv_map);
-
-    delete recv_data;
+	delete recv_data;
 }
 
 
-void direct_all_reduce(const int num_procs, const int rank,
-                       const int vector_len,
-                       const std::map<int, int>& in_vector,
-                       std::map<int, int>& reduced_vector) {
-
-    int dist = 1;
-    int n = vector_len;
-
-    //Copy in_vector to reduced_vector
-    copy_vector(in_vector, reduced_vector);
-    //Main loop
-    while (dist<num_procs) {
-        do_layer(reduced_vector, in_vector, dist, rank, num_procs, n);
-        dist+=1;
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
+// =================
+// Direct Allreduce
+// =================
 
 
 
+
+void sparse_all_reduce(const int num_procs, const int rank, const int vector_len,
+					   std::map<int, int>& in_vector, std::map<int, int>& reduced_vector,
+					   const char* distribution, const double dist_param) {
+	int num_active_procs;
+	std::vector<int> chunks = compute_partition_chunks(num_procs, num_active_procs, rank, vector_len, distribution, dist_param);
+	std::map<int, int> reduced_chunk;
+	//reduce_scatter(num_procs, num_active_procs, rank, vector_len, in_vector, reduced_chunk, chunks);
+	//all_gather(num_procs, num_active_procs, rank, vector_len, reduced_chunk, reduced_vector);
+    recursive_double(in_vector, reduced_vector, num_active_procs, rank, vector_len);
+	MPI_Barrier(MPI_COMM_WORLD);
 }
