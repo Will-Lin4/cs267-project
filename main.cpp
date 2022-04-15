@@ -110,10 +110,38 @@ void display_sparse_vector(std::map<int, int>& vector, const int vector_len) {
 }
 
 bool is_correct(const std::map<int, int>& reduced_vector,
-				const std::map<int, int>& correct_reduced_vector) {
-	return reduced_vector.size() == correct_reduced_vector.size()
-		&& std::equal(reduced_vector.begin(), reduced_vector.end(),
-					  correct_reduced_vector.begin());
+				const std::map<int, int>& correct_reduced_vector,
+                const int vector_len) {
+    int* test_buffer = (int*) calloc(vector_len, sizeof(int));
+    int* correct_buffer = (int*) calloc(vector_len, sizeof(int));
+
+    bool correct = true;
+    for (auto& pair : reduced_vector) {
+        if (pair.first < 0 || pair.first >= vector_len) {
+            correct = false;
+            break;
+        }
+        test_buffer[pair.first] = pair.second;
+    }
+
+    for (auto& pair : correct_reduced_vector) {
+        if (pair.first < 0 || pair.first >= vector_len) {
+            correct = false;
+            break;
+        }
+        correct_buffer[pair.first] = pair.second;
+    }
+
+    for (int i = 0; i < vector_len; i++) {
+        if (test_buffer[i] != correct_buffer[i]) {
+            correct = false;
+            break;
+        }
+    }
+
+    free(test_buffer);
+    free(correct_buffer);
+    return correct;
 }
 
 // ==============
@@ -160,6 +188,8 @@ int main(int argc, char** argv) {
 
     // Algorithm
     auto start_time = std::chrono::steady_clock::now();
+    //naive_sparse_all_reduce(
+    //        num_procs, rank, vector_len, in_vector, reduced_vector);
     dist_sparse_all_reduce(num_procs, rank, vector_len, in_vector, distribution, dist_param, reduced_vector);
     auto end_time = std::chrono::steady_clock::now();
 
@@ -194,7 +224,7 @@ int main(int argc, char** argv) {
 		//	display_sparse_vector(correct_reduced_vector, vector_len);
 		//}
 		
-		if (!is_correct(reduced_vector, correct_reduced_vector)) {
+		if (!is_correct(reduced_vector, correct_reduced_vector, vector_len)) {
 			std::cout << "Incorrect result on Rank: <" << rank << ">" << std::endl;
 		}
 	}
