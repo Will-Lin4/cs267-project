@@ -191,11 +191,11 @@ int main(int argc, char** argv) {
 		return -1;
 
 	if (rank == 0) {
-		std::cout << "---------------------" << "\n"
-				  << "Distribution: " << distribution << "\n"
+		std::cout << "-----------------------------" << "\n"
+				  << "Distribution: " << distribution << " (" << dist_param << ")\n"
 				  << "Length: " << vector_len << "\n"
 				  << "Sparsity: " << sparsity << "\n"
-				  << "---------------------" << "\n"
+				  << "-----------------------------" << "\n"
 				  << std::endl;
 	}
 

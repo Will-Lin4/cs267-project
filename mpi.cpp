@@ -1,9 +1,11 @@
 #include "common.h"
 #include <cstring>
 #include <iostream>
-#include <math.h>
 #include <mpi.h>
 #include <vector>
+
+#include <boost/math/distributions/geometric.hpp>
+#include <boost/math/distributions/poisson.hpp>
 
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
@@ -12,14 +14,6 @@
 // =================
 // Helper Functions
 // =================
-
-/* Modulus operator without a negative output */
-long factorial(const int n) {
-	long f = 1;
-	for (int i = 2; i <= n; i++)
-		f *= i;
-	return f;
-}
 
 std::vector<int> estimate_partition_boundaries(const int num_procs, const int vector_len,
 											   const std::map<int, int>& in_vector) {
@@ -69,9 +63,11 @@ double pmf (const int x, const char* distribution, const double dist_param) {
 	if (!strcmp(distribution, "uniform")) {
 		return 1/(double)dist_param;
 	} else if (!strcmp(distribution, "geometric")) {
-		return pow(1-dist_param, x-1) * dist_param;
+		boost::math::geometric_distribution<> geometric(dist_param);
+		return boost::math::pdf(geometric, x);
 	} else if (!strcmp(distribution, "poisson")) {
-		return pow(dist_param, x) * exp(-dist_param) / factorial(x);
+		boost::math::poisson_distribution<> poisson(dist_param);
+		return boost::math::pdf(poisson, x);
 	}
 
 	return (double)-1;
