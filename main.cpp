@@ -186,11 +186,21 @@ int main(int argc, char** argv) {
 						distribution, dist_param, in_vector))
         return -1;
 
+    if (rank == 0) {
+        std::cout << "---------------------" << "\n"
+                  << "Distribution: " << distribution << "\n"
+                  << "Length: " << vector_len << "\n"
+                  << "Sparsity: " << sparsity << "\n"
+                  << "---------------------" << "\n"
+                  << std::endl;
+    }
+
     // Algorithm
     auto start_time = std::chrono::steady_clock::now();
     //naive_sparse_all_reduce(
     //        num_procs, rank, vector_len, in_vector, reduced_vector);
     dist_sparse_all_reduce(num_procs, rank, vector_len, in_vector, distribution, dist_param, reduced_vector);
+	MPI_Barrier(MPI_COMM_WORLD);
     auto end_time = std::chrono::steady_clock::now();
 
     // Output results

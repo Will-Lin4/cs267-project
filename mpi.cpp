@@ -21,6 +21,51 @@ long factorial(const int n) {
     return f;
 }
 
+std::vector<int> estimate_partition_boundaries(
+        const int num_procs, const int my_rank, const int vector_len,
+        const std::map<int, int>& in_vector) {
+    int num_active_procs = num_procs;
+    if (num_active_procs > in_vector.size())
+        num_active_procs = in_vector.size();
+
+    std::vector<int64_t> tmp_boundaries;
+    tmp_boundaries.reserve(num_active_procs + 1);
+    tmp_boundaries.emplace_back(0);
+
+    int chunk_size = in_vector.size() / num_active_procs;
+
+    int i = 0;
+    for (const auto& elem : in_vector) {
+        if (i >= chunk_size) {
+            tmp_boundaries.emplace_back(elem.first);
+            i = 0;
+
+            if (in_vector.size() % num_active_procs > 0
+                    && tmp_boundaries.size() == in_vector.size() % num_active_procs) {
+                chunk_size += 1;
+            }
+        }
+
+        i++;
+    }
+
+    if (tmp_boundaries.back() < vector_len)
+        tmp_boundaries.emplace_back(vector_len);
+
+    int64_t* recv_buf = new int64_t[tmp_boundaries.size()];
+    MPI_Allreduce(tmp_boundaries.data(), recv_buf, tmp_boundaries.size(),
+                  MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+
+    std::vector<int> boundaries;
+    boundaries.reserve(tmp_boundaries.size());
+    for (int i = 0; i < tmp_boundaries.size(); i++) {
+        double avg = double(recv_buf[i]) / num_procs;
+        boundaries.emplace_back(avg + 0.5);
+    }
+
+    return std::move(boundaries);
+}
+
 double pmf (const int x, const char* distribution, const double dist_param) {
     if (!strcmp(distribution, "uniform")) {
         return 1/(double)dist_param;
@@ -35,10 +80,9 @@ double pmf (const int x, const char* distribution, const double dist_param) {
 
 /* Partitions {0,...,vector_len-1} into num_procs subsets of roughly equal mass
    according to the probability mass function specified by the distribution */
-std::vector<int> compute_partition_chunks(
-        const int num_procs, int &num_active_procs, const int my_rank,
-        const int vector_len, const char* distribution,
-        const double dist_param) {
+std::vector<int> compute_partition_boundaries(
+        const int num_procs, const int my_rank, const int vector_len,
+        const char* distribution, const double dist_param) {
 
     double total_mass = 0;
     for (int i = 0; i < vector_len; i++) {
@@ -65,7 +109,6 @@ std::vector<int> compute_partition_chunks(
     }
 
     chunk_boundaries.push_back(vector_len); // for convenience, so chunks[i+1] always exists
-    num_active_procs = rank;
 
     // if (my_rank == 0) {
     //     std::cout << "( ";
@@ -100,7 +143,7 @@ std::map<int, int> reduce_scatter(const int num_procs, const int num_active_proc
                                   const std::map<int, int>& in_vector,
                                   const std::vector<int> chunk_boundaries) {
     std::vector<MPI_Request> all_requests;
-    all_requests.reserve(num_active_procs * 2); // Both send and recv
+    all_requests.reserve(num_active_procs + num_procs); // Both send and recv
 
     // Scatter: For each active processor, send it the relevant chunk of in_vector
     std::vector<std::vector<int>> all_send_data;
@@ -114,70 +157,94 @@ std::map<int, int> reduce_scatter(const int num_procs, const int num_active_proc
         all_send_data.emplace_back();
         auto& send_data = all_send_data.back();
 
-        for (auto it = in_vector.lower_bound(chunk_boundaries[rank]);
-             it != in_vector.upper_bound(chunk_boundaries[rank + 1]); it++) {
+        for (auto it = in_vector.upper_bound(chunk_boundaries[rank] - 1);
+                it != in_vector.lower_bound(chunk_boundaries[rank + 1]); it++) {
             send_data.push_back(it->first);
             send_data.push_back(it->second);
         }
 
-        all_requests.emplace_back(MPI_REQUEST_NULL);
+        all_requests.emplace_back();
         MPI_Isend(send_data.data(), send_data.size(), MPI_INT, rank,
                   TAG_REDUCE_SCATTER, MPI_COMM_WORLD, &all_requests.back());
     }
 
-    size_t num_sends = all_requests.size();
+    size_t num_send = all_requests.size();
 
     // Reduce: Receive and reduce all chunks from other processors
     std::map<int, int> reduced_chunk;
+
+    size_t my_chunk_size = 0;
+    int* recv_buffer = nullptr;
+    size_t num_recv = 0;
+
     if (my_rank < num_active_procs) {
         // Initialize reduced_chunk with in_vector
-        for (auto it = in_vector.lower_bound(chunk_boundaries[my_rank]);
-                it != in_vector.upper_bound(chunk_boundaries[my_rank + 1]); it++) {
+        for (auto it = in_vector.upper_bound(chunk_boundaries[my_rank] - 1);
+                it != in_vector.lower_bound(chunk_boundaries[my_rank + 1]); it++) {
             reduced_chunk.emplace(it->first, it->second);
         }
 
-        int* recv_buffer = new int[2 * vector_len];
+        my_chunk_size = chunk_boundaries[my_rank + 1] - chunk_boundaries[my_rank];
+        recv_buffer = new int[2 * my_chunk_size * (num_procs - 1)];
+
+        // Receive chunks from remote processors.
         for (int rank = 0; rank < num_procs; rank++) {
             if (rank == my_rank)
                 continue;
 
-            MPI_Status recv_status;
-            MPI_Recv(recv_buffer, 2 * vector_len, MPI_INT, rank,
-                     TAG_REDUCE_SCATTER, MPI_COMM_WORLD, &recv_status);
+            all_requests.emplace_back();
+            MPI_Irecv(recv_buffer + num_recv * my_chunk_size * 2, my_chunk_size * 2,
+                     MPI_INT, rank, TAG_REDUCE_SCATTER, MPI_COMM_WORLD,
+                     &all_requests.back());
+            num_recv += 1;
+        }
+    }
 
+    int index = -1;
+    MPI_Status status;
+    for (int i = 0; i < all_requests.size(); i++) {
+        MPI_Waitany(all_requests.size(), all_requests.data(), &index, &status);
+
+        if (index >= num_send) {
             int recv_size;
-            MPI_Get_count(&recv_status, MPI_INT, &recv_size);
+            MPI_Get_count(&status, MPI_INT, &recv_size);
 
             for (int i = 0; i < recv_size; i += 2) {
-                int idx = recv_buffer[i];
-                int val = recv_buffer[i+1];
+                int idx = recv_buffer[(index - num_send) * my_chunk_size * 2 + i];
+                int val = recv_buffer[(index - num_send) * my_chunk_size * 2 + i + 1];
 
                 reduced_chunk.emplace(idx, 0);
                 reduced_chunk[idx] += val;
             }
         }
+    }
 
+    if (recv_buffer) {
         delete recv_buffer;
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
     return std::move(reduced_chunk);
 }
 
 void all_gather(const int num_procs, const int num_active_procs,
                 const int my_rank, const int vector_len,
                 const std::map<int, int>& reduced_chunk,
+                const std::vector<int> chunk_boundaries,
                 std::map<int, int>& reduced_vector) {
 
     std::vector<MPI_Request> all_requests;
     all_requests.reserve(num_active_procs * 2); // Both send and recv
 
+    for (const auto& elem : reduced_chunk) {
+        reduced_vector.emplace(elem.first, elem.second);
+    }
+
     // Send reduced_chunk to all other processors
     std::vector<int> send_data; 
+    send_data.reserve(2 * reduced_chunk.size());
+
     if (my_rank < num_active_procs) {
         for (const auto& elem : reduced_chunk) {
-            reduced_vector.emplace(elem.first, elem.second);
-
             send_data.push_back(elem.first);
             send_data.push_back(elem.second);
         }
@@ -187,33 +254,51 @@ void all_gather(const int num_procs, const int num_active_procs,
                 continue;
             }
 
-            all_requests.emplace_back(MPI_REQUEST_NULL);
+            all_requests.emplace_back();
             MPI_Isend(send_data.data(), send_data.size(), MPI_INT, rank,
                       TAG_ALL_GATHER, MPI_COMM_WORLD, &all_requests.back());
         }
     }
 
+    size_t num_send = all_requests.size();
+
     // Read reduced chunks from all active processors
-    int* recv_data = new int[2 * vector_len];
+    int* recv_buffer = new int[2 * vector_len];
+
+    std::vector<int*> next_buffer;
+    next_buffer.emplace_back(recv_buffer);
+
     for (int rank = 0; rank < num_active_procs; rank++) {
         if (rank == my_rank) {
             continue;
         }
 
-        MPI_Status recv_status;
-        MPI_Recv(recv_data, 2 * vector_len, MPI_INT, rank, TAG_ALL_GATHER,
-                 MPI_COMM_WORLD, &recv_status);
+        size_t chunk_size = chunk_boundaries[rank + 1] - chunk_boundaries[rank];
 
-        int recv_size;
-        MPI_Get_count(&recv_status, MPI_INT, &recv_size);
-        for (int i = 0; i < recv_size; i += 2) {
-            reduced_vector.emplace(recv_data[i], recv_data[i+1]);
+        all_requests.emplace_back();
+        MPI_Irecv(next_buffer.back(), 2 * chunk_size, MPI_INT, rank,
+                  TAG_ALL_GATHER, MPI_COMM_WORLD, &all_requests.back());
+
+        next_buffer.emplace_back(next_buffer.back() + 2 * chunk_size);
+    }
+
+    int index = -1;
+    MPI_Status status;
+    for (int i = 0; i < all_requests.size(); i++) {
+        MPI_Waitany(all_requests.size(), all_requests.data(), &index, &status);
+
+        if (index >= num_send) {
+            int recv_size;
+            MPI_Get_count(&status, MPI_INT, &recv_size);
+
+            for (int i = 0; i < recv_size; i += 2) {
+                reduced_vector.emplace(next_buffer[index - num_send][i],
+                                       next_buffer[index - num_send][i+1]);
+            }
         }
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    delete recv_data;
+    delete recv_buffer;
 }
 
 void dist_sparse_all_reduce(const int num_procs, const int rank,
@@ -221,15 +306,35 @@ void dist_sparse_all_reduce(const int num_procs, const int rank,
                             const std::map<int, int>& in_vector, 
                             const char* distribution, const double dist_param,
                             std::map<int, int>& reduced_vector) {
-    int num_active_procs;
+
     std::vector<int> chunk_boundaries = 
-        compute_partition_chunks(num_procs, num_active_procs, rank, vector_len,
-                                 distribution, dist_param);
+        estimate_partition_boundaries(num_procs, rank, vector_len,
+                                      in_vector);
+
+    //std::vector<int> chunk_boundaries = 
+    //    compute_partition_boundaries(num_procs, rank, vector_len, distribution,
+    //                                 dist_param);
+    int num_active_procs = chunk_boundaries.size() - 1;
+
+    if (rank == 0) {
+        //std::cout << chunk_boundaries.back() << std::endl;
+        for (int i = 0; i < num_active_procs + 1; i++) {
+            std::cout << chunk_boundaries[i] << " ";
+        }
+
+        ////for (const auto c : chunk_boundaries_) {
+        ////    std::cout << c << " ";
+        ////}
+
+        std::cout << std::endl;
+        std::cout << num_active_procs << std::endl;
+        //std::cout << num_active_procs << std::endl;
+    }
 
     std::map<int, int> reduced_chunk =
         reduce_scatter(num_procs, num_active_procs, rank, vector_len,
                        in_vector, chunk_boundaries);
 
-    all_gather(num_procs, num_active_procs, rank, vector_len, reduced_chunk, reduced_vector);
-    MPI_Barrier(MPI_COMM_WORLD);
+    all_gather(num_procs, num_active_procs, rank, vector_len, reduced_chunk,
+               chunk_boundaries, reduced_vector);
 }
