@@ -9,7 +9,7 @@
 
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
-#define EPSILON 0 // TODO: determine optimal value for epsilon
+#define EPSILON 0.00001
 
 // =================
 // Helper Functions
@@ -77,30 +77,53 @@ double pmf (const int x, const char* distribution, const double dist_param) {
    according to the probability mass function specified by the distribution */
 std::vector<int> compute_partition_boundaries(const int num_procs, const int vector_len,
 											  const char* distribution, const double dist_param) {
-	double total_mass = 0;
-	for (int i = 0; i < vector_len; i++) {
-		total_mass += pmf(i, distribution, dist_param);
-	}
-
-	int rank = 1;
-	double mass = 0;
-	const double uniform_mass = 1/(double)num_procs;
 	std::vector<int> chunk_boundaries; // chunks[i] is first index of processor i's chunk
-	chunk_boundaries.push_back(0);
-	for (int idx = 0; idx < vector_len - 1; idx++) {
-		/* Assign indices to chunk until cumulative probability mass
-		   is at least within EPSILON of (ideal) uniform mass */
-		mass += pmf(idx, distribution, dist_param) / total_mass;
-		if (mass >= uniform_mass - EPSILON) {
-			chunk_boundaries.push_back(idx + 1);
-			rank++;
-			mass = 0;
+	if (!strcmp(distribution, "uniform")) {
+		const double chunk_size = vector_len / num_procs;
+		for (int i = 0; i <= num_procs; i++) {
+			int idx = std::round(i * chunk_size);
+			chunk_boundaries.push_back(idx);
+		}
+	} else {
+		double mu;
+		if (!strcmp(distribution, "geometric")) {
+			mu = (1 - dist_param) / dist_param;
+		} else if (!strcmp(distribution, "poisson")) {
+			mu = dist_param;
 		}
 
-		if (rank == num_procs)
-			break; // stop after last processor's chunk is determined
+		double total_mass = 0;
+		for (int i = 0; i < vector_len; i++) {
+			total_mass += pmf(i, distribution, dist_param);
+			if (total_mass > 0.99) {
+				total_mass = 1;
+				break;
+			}
+		}
+
+		int rank = 1;
+		double mass = 0;
+		const double uniform_mass = 1/(double)num_procs;
+		chunk_boundaries.push_back(0);
+		for (int idx = 0; idx < vector_len - 1; idx++) {
+			/* Assign indices to chunk until cumulative
+			probability mass is at least uniform mass */
+			double dmass = pmf(idx, distribution, dist_param) / total_mass;
+			mass += dmass;
+			if (mass >= uniform_mass - EPSILON) {
+				chunk_boundaries.push_back(idx + 1);
+				rank++;
+				mass = 0;
+			}
+
+			if (rank == num_procs)
+				break; // stop after last processor's chunk is determined
+
+			if (idx > mu && dmass < EPSILON)
+				break; // stop prematurely if at tail end of distribution
+		}
+		chunk_boundaries.push_back(vector_len); // for convenience, so chunks[i+1] always exists
 	}
-	chunk_boundaries.push_back(vector_len); // for convenience, so chunks[i+1] always exists
 
 	return std::move(chunk_boundaries);
 }
