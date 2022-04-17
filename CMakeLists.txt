@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
-project(cs267_project)
+project(hw2_2)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 
 find_package(MPI REQUIRED)
@@ -12,7 +12,7 @@ set(GROUP_NAME "None" CACHE STRING "Your group name as it appears on bCourses (n
 # Packaging system
 if (NOT ${GROUP_NAME} STREQUAL None)
     set(CPACK_GENERATOR TGZ)
-    set(CPACK_PACKAGE_FILE_NAME "cs267${GROUP_NAME}_project")
+    set(CPACK_PACKAGE_FILE_NAME "cs267${GROUP_NAME}_hw2_2")
     install(FILES mpi.cpp DESTINATION .)
     install(FILES ${CPACK_PACKAGE_FILE_NAME}.pdf DESTINATION .)
     include(CPack)
@@ -27,7 +27,7 @@ if (NOT "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
             "module swap ${Prg-${CMAKE_C_COMPILER_ID}} PrgEnv-gnu")
 endif ()
 
-add_executable(mpi main.cpp mpi.cpp common.h)
+add_executable(mpi main.cpp naive_mpi.cpp mpi.cpp common.h)
 target_link_libraries(mpi PRIVATE MPI::MPI_CXX)
 
 # Copy the job scripts
