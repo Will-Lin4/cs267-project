@@ -75,9 +75,8 @@ int generate_vector(const int vector_len, const int num_procs, const int rank,
 	std::mt19937 gen(random_seed + rank);
 	std::uniform_int_distribution<> value_generator(0, 1024);
 
-	int nz_count = 0, nz_max = std::round(sparsity * vector_len);
-	int iterations = 0, iterations_max = vector_len;
-	while (nz_count < nz_max) {
+	int nz_count = 0, nz_target = std::round(sparsity * vector_len);
+	while (nz_count < nz_target) {
 		int idx;
 		if (!strcmp(distribution, "uniform")) idx = uniform(gen);
 		else if (!strcmp(distribution, "geometric")) idx = geometric(gen);
@@ -87,13 +86,6 @@ int generate_vector(const int vector_len, const int num_procs, const int rank,
 		if (!vector.count(idx)) {
 			vector.emplace(idx, value_generator(gen));
 			nz_count++;
-		}
-
-		iterations++;
-		if (iterations > iterations_max) {
-			// stop prematurely in case taking too long to ensure specified sparsity
-			// TODO: this breaks assumption that input vector sparsity is exactly as specified
-			break;
 		}
 	}
 

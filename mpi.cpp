@@ -274,9 +274,9 @@ void dist_sparse_all_reduce(const int num_procs, const int rank,
 							const std::map<int, int>& in_vector, 
 							const char* distribution, const double dist_param,
 							std::map<int, int>& reduced_vector) {
-	// std::vector<int> chunk_boundaries = 
-	//	   estimate_partition_boundaries(num_procs, vector_len, in_vector);
-	std::vector<int> chunk_boundaries = 
+	// std::vector<int> chunk_boundaries =
+	// 	estimate_partition_boundaries(num_procs, vector_len, in_vector);
+	std::vector<int> chunk_boundaries =
 		compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
 	int num_active_procs = chunk_boundaries.size() - 1;
 
