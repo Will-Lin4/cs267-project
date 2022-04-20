@@ -3,9 +3,18 @@
 
 #include <map>
 
-void sparse_all_reduce(const int num_procs, const int rank,
-                       const int vector_len,
-                       const std::map<int, int>& in_vector,
-                       std::map<int, int>& reduced_vector);
+void naive_sparse_all_reduce(const int num_procs, const int rank,
+                             const int vector_len,
+                             const std::map<int, int>& in_vector,
+                             std::map<int, int>& reduced_vector);
 
+void dist_sparse_all_reduce(const int num_procs, const int rank,
+                            const int vector_len,
+                            const std::map<int, int>& in_vector,
+                            const char* distribution, const double dist_param,
+                            std::map<int, int>& reduced_vector);
+							
+void recursive_double(std::map<int, int>& in_vector, 
+                      std::map<int, int>& reduced_vector, const int num_procs, 
+                      const int rank, const int vector_len);  
 #endif
