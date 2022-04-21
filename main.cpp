@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
 
 	std::random_device rd;
 	int random_seed = find_int_arg(argc, argv, "-r", rd());
-	int vector_len = find_int_arg(argc, argv, "-n", 1000);
+	int vector_len = find_int_arg(argc, argv, "-n", 10);
 	double sparsity = find_double_arg(argc, argv, "-s", 0.3);
 	char* distribution = find_string_arg(argc, argv, "-d", (char*) "uniform");
 	double dist_param = find_distribution_parameter(argc, argv, vector_len, distribution);
@@ -187,8 +187,7 @@ int main(int argc, char** argv) {
 				  << "Distribution: " << distribution << " (" << dist_param << ")\n"
 				  << "Length: " << vector_len << "\n"
 				  << "Sparsity: " << sparsity << "\n"
-				  << "-----------------------------" << "\n"
-				  << std::endl;
+				  << "-----------------------------" << "\n";
 	}
 
 	// Perform Allreduce
