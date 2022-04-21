@@ -79,8 +79,9 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 											  const char* distribution, const double dist_param) {
 	std::vector<int> chunk_boundaries; // chunks[i] is first index of processor i's chunk
 	if (!strcmp(distribution, "uniform")) {
-		const double chunk_size = vector_len / num_procs;
-		for (int i = 0; i <= num_procs; i++) {
+		int num_active_procs = (num_procs > vector_len) ? vector_len : num_procs;
+		double chunk_size = (double)vector_len / (double)num_active_procs;
+		for (int i = 0; i <= num_active_procs; i++) {
 			int idx = std::round(i * chunk_size);
 			chunk_boundaries.push_back(idx);
 		}
