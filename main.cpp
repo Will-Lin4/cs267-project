@@ -83,7 +83,7 @@ int generate_vector(const int vector_len, const int num_procs, const int rank,
 		else if (!strcmp(distribution, "poisson")) idx = poisson(gen);
 		else { std::cerr << "Distribution '" << distribution << "' not found\n"; return -1; }
 
-		if (!vector.count(idx)) {
+		if (idx < vector_len && !vector.count(idx)) {
 			vector.emplace(idx, value_generator(gen));
 			nz_count++;
 		}
