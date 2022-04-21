@@ -76,56 +76,57 @@ double pmf (const int x, const char* distribution, const double dist_param) {
 /* Partitions {0,...,vector_len-1} into num_procs subsets of roughly equal mass
    according to the probability mass function specified by the distribution */
 std::vector<int> compute_partition_boundaries(const int num_procs, const int vector_len,
-                                              const char* distribution, const double dist_param) {
-    std::vector<int> chunk_boundaries; // chunks[i] is first index of processor i's chunk
-    if (!strcmp(distribution, "uniform")) {
-        const double chunk_size = vector_len / num_procs;
-        for (int i = 0; i <= num_procs; i++) {
-            int idx = std::round(i * chunk_size);
-            chunk_boundaries.push_back(idx);
-        }
-    } else {
-        double mu;
-        if (!strcmp(distribution, "geometric")) {
-            mu = (1 - dist_param) / dist_param;
-        } else if (!strcmp(distribution, "poisson")) {
-            mu = dist_param;
-        }
+											  const char* distribution, const double dist_param) {
+	std::vector<int> chunk_boundaries; // chunks[i] is first index of processor i's chunk
+	if (!strcmp(distribution, "uniform")) {
+		int num_active_procs = (num_procs > vector_len) ? vector_len : num_procs;
+		double chunk_size = (double)vector_len / (double)num_active_procs;
+		for (int i = 0; i <= num_active_procs; i++) {
+			int idx = std::round(i * chunk_size);
+			chunk_boundaries.push_back(idx);
+		}
+	} else {
+		double mu;
+		if (!strcmp(distribution, "geometric")) {
+			mu = (1 - dist_param) / dist_param;
+		} else if (!strcmp(distribution, "poisson")) {
+			mu = dist_param;
+		}
 
-        double total_mass = 0;
-        for (int i = 0; i < vector_len; i++) {
-            total_mass += pmf(i, distribution, dist_param);
-            if (total_mass > 0.99) {
-                total_mass = 1;
-                break;
-            }
-        }
+		double total_mass = 0;
+		for (int i = 0; i < vector_len; i++) {
+			total_mass += pmf(i, distribution, dist_param);
+			if (total_mass > 0.99) {
+				total_mass = 1;
+				break;
+			}
+		}
 
-        int rank = 1;
-        double mass = 0;
-        const double uniform_mass = 1/(double)num_procs;
-        chunk_boundaries.push_back(0);
-        for (int idx = 0; idx < vector_len - 1; idx++) {
-            /* Assign indices to chunk until cumulative
-            probability mass is at least uniform mass */
-            double dmass = pmf(idx, distribution, dist_param) / total_mass;
-            mass += dmass;
-            if (mass >= uniform_mass - EPSILON) {
-                chunk_boundaries.push_back(idx + 1);
-                rank++;
-                mass = 0;
-            }
+		int rank = 1;
+		double mass = 0;
+		const double uniform_mass = 1/(double)num_procs;
+		chunk_boundaries.push_back(0);
+		for (int idx = 0; idx < vector_len - 1; idx++) {
+			/* Assign indices to chunk until cumulative
+			probability mass is at least uniform mass */
+			double dmass = pmf(idx, distribution, dist_param) / total_mass;
+			mass += dmass;
+			if (mass >= uniform_mass - EPSILON) {
+				chunk_boundaries.push_back(idx + 1);
+				rank++;
+				mass = 0;
+			}
 
-            if (rank == num_procs)
-                break; // stop after last processor's chunk is determined
+			if (rank == num_procs)
+				break; // stop after last processor's chunk is determined
 
-            if (idx > mu && dmass < EPSILON)
-                break; // stop prematurely if at tail end of distribution
-        }
-        chunk_boundaries.push_back(vector_len); // for convenience, so chunks[i+1] always exists
-    }
+			if (idx > mu && dmass < EPSILON)
+				break; // stop prematurely if at tail end of distribution
+		}
+		chunk_boundaries.push_back(vector_len); // for convenience, so chunks[i+1] always exists
+	}
 
-    return std::move(chunk_boundaries);
+	return std::move(chunk_boundaries);
 }
 
 /* Modulus operator without a negative output */
@@ -169,7 +170,10 @@ void array_to_map(int *v, int n, std::map<int, int>& m) {
 void do_recursive_double(std::map<int, int>& vector, int *recv_data, 
                          const int rank, const int num_procs, const int n,
                          const int limit, const int distance) {
-    
+	//Error if num_procs is not a power of two or if it's less than 1
+	if (fmod(log2(num_procs), 1) || num_procs < 1)
+		std::cout << "Error: recursive doubling should only be done when the number of processors is a power of two." << std::endl;
+
     MPI_Request *requests = new MPI_Request[2];
     MPI_Request r1;
     MPI_Request r2;
