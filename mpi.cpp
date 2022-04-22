@@ -195,17 +195,17 @@ void do_recursive_double(std::map<int, int>& vector, int *recv_data,
     if ( ((rank + 1) % (distance * 2)) <= distance && ((rank + 1) % (distance * 2)) ) { 
         ///std::cout << "Rank " << rank << " sending to process " << rank+distance << std::endl;
         MPI_Isend(send_data.data(), n*2, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[0]);
-        //std::cout << "Rank " << rank << " sending to process " << rank-distance << std::endl;
+        //std::cout << "Rank " << rank << " sending to process " << rank+distance << std::endl;
         //std::cout << "Rank " << rank << " receiving from process " << rank+distance << std::endl;
         MPI_Irecv(recv_data, n*2, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &requests[1]);
-        //std::cout << "Rank " << rank << " receiving from process " << rank-distance << std::endl;
+        //std::cout << "Rank " << rank << " receiving from process " << rank+distance << std::endl;
     } else {
         //std::cout << "Rank " << rank << " sending to process " << rank-distance << std::endl;
         MPI_Isend(send_data.data(), n*2, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[0]);
-        //std::cout << "Rank " << rank << " sending to process " << rank+distance << std::endl;
+        //std::cout << "Rank " << rank << " sending to process " << rank-distance << std::endl;
         //std::cout << "Rank " << rank << " receiving from process " << rank-distance << std::endl;
         MPI_Irecv(recv_data, n*2, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &requests[1]);
-        //std::cout << "Rank " << rank << " receiving from process " << rank+distance << std::endl;
+        //std::cout << "Rank " << rank << " receiving from process " << rank-distance << std::endl;
     }
     MPI_Waitall(2, requests, MPI_STATUSES_IGNORE);
     
@@ -227,15 +227,15 @@ void recursive_double(std::map<int, int>& in_vector,
     int limit = num_procs/2;
     int *recv_data = new int[vector_len*2]; //*2 because it needs to fit the indices as well
 
-    //Main loop
-    while (distance <= limit) {
-        do_recursive_double(in_vector, recv_data, rank, num_procs, vector_len, limit, distance);
-        distance *= 2;
-    }
-    
     //Copy to reduced vector
     for (auto i = in_vector.begin(); i != in_vector.end(); ++i) {
         reduced_vector[i->first] = i->second;
+    }
+
+    //Main loop
+    while (distance <= limit) {
+        do_recursive_double(reduced_vector, recv_data, rank, num_procs, vector_len, limit, distance);
+        distance *= 2;
     }
 
     delete recv_data;
