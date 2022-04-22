@@ -9,7 +9,7 @@
 
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
-#define EPSILON 0.00001
+#define EPSILON 0.0000001
 
 // =================
 // Helper Functions
