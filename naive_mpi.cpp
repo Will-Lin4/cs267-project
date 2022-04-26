@@ -16,9 +16,10 @@ void naive_sparse_all_reduce(const int num_procs, const int rank,
 
 	MPI_Allreduce(send, recv, vector_len, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-	for (int i = 0; i < vector_len; i++) {
+	auto hint = reduced_vector.end();
+	for (int i = vector_len - 1; i >= 0; i--) {
 		if (recv[i] != 0) {
-			reduced_vector.emplace(i, recv[i]);
+			hint = reduced_vector.emplace_hint(hint, i, recv[i]);
 		}
 	}
 
