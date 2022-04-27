@@ -225,7 +225,7 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
 					   const int my_rank, const int vector_len,
 					   const std::map<int, int>& reduced_chunk,
 					   const std::vector<int> chunk_boundaries,
-					   std::map<int, int>& reduced_vector) {
+					   int* reduced_vector) {
 	std::vector<MPI_Request> all_requests;
 	all_requests.reserve(num_active_procs * 2); // Both send and recv
 
@@ -234,10 +234,19 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
 	if (my_rank < num_active_procs) {
 		send_data.reserve(2 * reduced_chunk.size());
 
+		int next_index = chunk_boundaries[my_rank];
 		for (const auto& elem : reduced_chunk) {
-			reduced_vector.emplace(elem.first, elem.second);
 			send_data.push_back(elem.first);
 			send_data.push_back(elem.second);
+
+			for (int i = next_index; i < elem.first; i++) {
+				reduced_vector[i] = 0;
+			}
+			reduced_vector[elem.first] = elem.second;
+			next_index = elem.first + 1;
+		}
+		for (int i = next_index; i < chunk_boundaries[my_rank + 1]; i++) {
+			reduced_vector[i] = 0;
 		}
 
 		for (int rank = 0; rank < num_procs; rank++) {
@@ -281,21 +290,21 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
 				rank += 1;
 
 			int vector_index = chunk_boundaries[rank] * 2;
+			int next_index = chunk_boundaries[rank + 1] - 1;
 
-			auto hint = reduced_vector.end();
-			for (int i = (recv_size - 1) - 1; i >= 0; i -= 2) {
-				if (recv_buffer[vector_index + i + 1] != 0)
-					hint = reduced_vector.emplace_hint(
-							hint, recv_buffer[vector_index + i],
-							recv_buffer[vector_index + i + 1]);
+			for (int i = recv_size - 2; i >= 0; i -= 2) {
+				int idx = recv_buffer[vector_index + i];
+				int val = recv_buffer[vector_index + i + 1];
+
+				for (int j = next_index; j > idx; j--) {
+					reduced_vector[j] = 0;
+				}
+				reduced_vector[idx] = val;
+				next_index = idx - 1;
 			}
-
-			//for (int i = 0; i < recv_size; i += 2) {
-			//	  if (recv_buffer[vector_index + i + 1] != 0)
-			//		  reduced_vector.emplace(
-			//				  recv_buffer[vector_index + i],
-			//				  recv_buffer[vector_index + i + 1]);
-			//}
+			for (int i = next_index; i >= chunk_boundaries[rank]; i--) {
+				reduced_vector[i] = 0;
+			}
 		}
 	}
 
@@ -306,7 +315,7 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 					  const int my_rank, const int vector_len,
 					  const std::map<int, int>& reduced_chunk,
 					  const std::vector<int> chunk_boundaries,
-					  std::map<int, int>& reduced_vector) {
+					  int* reduced_vector) {
 	std::vector<MPI_Request> all_requests;
 	all_requests.reserve(num_active_procs * 2); // Both send and recv
 
@@ -319,18 +328,18 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 
 		int next_index = chunk_boundaries[my_rank];
 		for (const auto& elem : reduced_chunk) {
-			reduced_vector.emplace(elem.first, elem.second);
-
 			for (int i = next_index; i < elem.first; i++) {
 				send_buffer[i - chunk_boundaries[my_rank]] = 0;
+				reduced_vector[i] = 0;
 			}
 
 			send_buffer[elem.first - chunk_boundaries[my_rank]] = elem.second;
+			reduced_vector[elem.first] = elem.second;
 			next_index = elem.first + 1;
 		}
-
 		for (int i = next_index; i < chunk_boundaries[my_rank + 1]; i++) {
 			send_buffer[i - chunk_boundaries[my_rank]] = 0;
+			reduced_vector[i] = 0;
 		}
 
 		for (int rank = 0; rank < num_procs; rank++) {
@@ -375,12 +384,10 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 
 			int vector_index = chunk_boundaries[rank];
 
-			auto hint = reduced_vector.end();
 			for (int i = recv_size - 1; i >= 0; i--) {
-				if (recv_buffer[vector_index + i] != 0)
-					hint = reduced_vector.emplace_hint(
-							hint, vector_index + i,
-							recv_buffer[vector_index + i]);
+				int idx = vector_index + i;
+				int val = recv_buffer[vector_index + i];
+				reduced_vector[idx] = val;
 			}
 		}
 	}
@@ -394,19 +401,27 @@ void dist_sparse_all_reduce(const int num_procs, const int rank,
 							const int vector_len,
 							const std::map<int, int>& in_vector,
 							const char* distribution, const double dist_param,
-							std::map<int, int>& reduced_vector) {
+							int* reduced_vector) {
 	// std::vector<int> chunk_boundaries =
 	//	   estimate_partition_boundaries(num_procs, vector_len, in_vector);
 	std::vector<int> chunk_boundaries =
 		compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
 	int num_active_procs = chunk_boundaries.size() - 1;
 
+	// if (rank == 0) {
+	// 	std::cout << '[' << num_active_procs << "]";
+	// 	for (const auto x : chunk_boundaries) {
+	// 		std::cout << ' ' << x;
+	// 	}
+	// 	std::cout << '\n';
+	// }
+
 	std::map<int, int> reduced_chunk =
 		reduce_scatter(num_procs, num_active_procs, rank,
 					   vector_len, in_vector, chunk_boundaries);
 
-	//dense_all_gather(num_procs, num_active_procs, rank, vector_len,
-	//				 reduced_chunk, chunk_boundaries, reduced_vector);
+	// dense_all_gather(num_procs, num_active_procs, rank, vector_len,
+	// 				 reduced_chunk, chunk_boundaries, reduced_vector);
 	sparse_all_gather(num_procs, num_active_procs, rank, vector_len,
 					  reduced_chunk, chunk_boundaries, reduced_vector);
 }

@@ -4,6 +4,7 @@ extra=1 # duplicate commands for every distribution
 output_file='correctness_checks.out'
 commands=(
 	'srun ./mpi'
+	'srun -n 2 ./mpi'
 	'srun -n 1 ./mpi -n 0'
 	'srun -n 5 ./mpi -n 1'
 	'srun -n 4 ./mpi -n 2'

@@ -105,39 +105,21 @@ void display_sparse_vector(std::map<int, int>& vector, const int vector_len) {
 	std::cout << "]\n";
 }
 
-bool is_correct(const std::map<int, int>& reduced_vector,
-				const std::map<int, int>& correct_reduced_vector,
-				const int vector_len) {
-	int* test_buffer = (int*) calloc(vector_len, sizeof(int));
-	int* correct_buffer = (int*) calloc(vector_len, sizeof(int));
-
-	bool correct = true;
-	for (auto& pair : reduced_vector) {
-		if (pair.first < 0 || pair.first >= vector_len) {
-			correct = false;
-			break;
-		}
-		test_buffer[pair.first] = pair.second;
-	}
-
-	for (auto& pair : correct_reduced_vector) {
-		if (pair.first < 0 || pair.first >= vector_len) {
-			correct = false;
-			break;
-		}
-		correct_buffer[pair.first] = pair.second;
-	}
-
+void display_dense_vector(int* vector, const int vector_len) {
+	std::cout << "[ ";
 	for (int i = 0; i < vector_len; i++) {
-		if (test_buffer[i] != correct_buffer[i]) {
-			correct = false;
-			break;
+		std::cout << vector[i] << ' ';
+	}
+	std::cout << "]\n";
+}
+
+bool is_correct(int* reduced_vector, int* correct_reduced_vector, const int vector_len) {
+	for (int i = 0; i < vector_len; i++) {
+		if (reduced_vector[i] != correct_reduced_vector[i]) {
+			return false;
 		}
 	}
-
-	free(test_buffer);
-	free(correct_buffer);
-	return correct;
+	return true;
 }
 
 // ==============
@@ -175,7 +157,7 @@ int main(int argc, char** argv) {
 	double dist_param = find_distribution_parameter(argc, argv, vector_len, distribution);
 
 	std::map<int, int> in_vector;
-	std::map<int, int> reduced_vector;
+	int* reduced_vector = new int[vector_len];
 
 	// Generate input vector
 	if (generate_vector(vector_len, num_procs, rank, random_seed,
@@ -206,12 +188,12 @@ int main(int argc, char** argv) {
 			std::cout << "Checking correctness..." << std::endl;
 		}
 
-		std::map<int, int> correct_reduced_vector;
+		int* correct_reduced_vector = new int[vector_len];
 		naive_sparse_all_reduce(num_procs, rank, vector_len, in_vector, correct_reduced_vector);
 
 		// if (rank == 0) {
-		//	display_sparse_vector(reduced_vector, vector_len);
-		//	display_sparse_vector(correct_reduced_vector, vector_len);
+		// 	display_dense_vector(reduced_vector, vector_len);
+		// 	display_dense_vector(correct_reduced_vector, vector_len);
 		// }
 
 		if (!is_correct(reduced_vector, correct_reduced_vector, vector_len)) {
