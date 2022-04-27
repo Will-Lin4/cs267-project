@@ -258,7 +258,6 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
 
     for (int rank = 0; rank < num_active_procs; rank++) {
         if (rank == my_rank) {
-            all_requests.emplace_back(MPI_REQUEST_NULL);
             continue;
         }
 
@@ -279,14 +278,26 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
             int recv_size;
             MPI_Get_count(&status, MPI_INT, &recv_size);
 
+            int rank = index - num_send;
+            if (rank >= my_rank)
+                rank += 1;
+
+            int vector_index = chunk_boundaries[rank] * 2;
+
             auto hint = reduced_vector.end();
-            int vector_index = chunk_boundaries[index - num_send] * 2;
             for (int i = (recv_size - 1) - 1; i >= 0; i -= 2) {
                 if (recv_buffer[vector_index + i + 1] != 0)
                     hint = reduced_vector.emplace_hint(
                             hint, recv_buffer[vector_index + i],
                             recv_buffer[vector_index + i + 1]);
             }
+
+            //for (int i = 0; i < recv_size; i += 2) {
+            //    if (recv_buffer[vector_index + i + 1] != 0)
+            //        reduced_vector.emplace(
+            //                recv_buffer[vector_index + i],
+            //                recv_buffer[vector_index + i + 1]);
+            //}
         }
     }
 
@@ -340,7 +351,6 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
     int* recv_buffer = new int[vector_len];
     for (int rank = 0; rank < num_active_procs; rank++) {
         if (rank == my_rank) {
-            all_requests.emplace_back(MPI_REQUEST_NULL);
             continue;
         }
 
@@ -361,8 +371,13 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
             int recv_size;
             MPI_Get_count(&status, MPI_INT, &recv_size);
 
+            int rank = index - num_send;
+            if (rank >= my_rank)
+                rank += 1;
+
+            int vector_index = chunk_boundaries[rank];
+
             auto hint = reduced_vector.end();
-            int vector_index = chunk_boundaries[index - num_send];
             for (int i = recv_size - 1; i >= 0; i--) {
                 if (recv_buffer[vector_index + i] != 0)
                     hint = reduced_vector.emplace_hint(
