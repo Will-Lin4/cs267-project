@@ -210,8 +210,8 @@ int main(int argc, char** argv) {
 		naive_sparse_all_reduce(num_procs, rank, vector_len, in_vector, correct_reduced_vector);
 
 		// if (rank == 0) {
-		// 	display_sparse_vector(reduced_vector, vector_len);
-		// 	display_sparse_vector(correct_reduced_vector, vector_len);
+		//	display_sparse_vector(reduced_vector, vector_len);
+		//	display_sparse_vector(correct_reduced_vector, vector_len);
 		// }
 
 		if (!is_correct(reduced_vector, correct_reduced_vector, vector_len)) {
