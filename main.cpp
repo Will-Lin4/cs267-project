@@ -72,7 +72,7 @@ int generate_vector(const int vector_len, const int num_procs, const int rank,
 	std::geometric_distribution<> geometric(dist_param);
 	std::poisson_distribution<> poisson(dist_param);
 
-	std::mt19937 gen(random_seed + rank);
+	std::mt19937 gen(random_seed * 1000 + rank);
 	std::uniform_int_distribution<> value_generator(0, 1024);
 
 	int nz_count = 0, nz_target = std::round(sparsity * vector_len);
