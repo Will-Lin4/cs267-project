@@ -9,7 +9,12 @@
 
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
+#define TAG_RECURSIVE_DOUBLE 2
 #define EPSILON 0.0000001
+
+// =================
+// Helper Functions
+// =================
 
 /* Partitions {0,...,vector_len-1} into num_active_procs subsets of roughly equal
    sparsity based on averaging distribution of nonzero elements across processors */
@@ -127,6 +132,11 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 
 	return std::move(chunk_boundaries);
 }
+
+
+// =========================
+// Rabenseifner's Algorithm
+// =========================
 
 std::map<int, int> reduce_scatter(const int num_procs, const int num_active_procs,
 								  const int my_rank, const int vector_len,
@@ -504,7 +514,7 @@ void dynamic_all_gather(const int num_procs, const int num_active_procs,
 	delete recv_buffer;
 }
 
-void dist_sparse_all_reduce(const int num_procs, const int rank,
+void rabenseifner_algorithm(const int num_procs, const int rank,
 							const int vector_len,
 							const std::map<int, int>& in_vector,
 							const char* distribution, const double dist_param,
@@ -527,4 +537,70 @@ void dist_sparse_all_reduce(const int num_procs, const int rank,
 	//				   reduced_chunk, chunk_boundaries, reduced_vector);
 	dynamic_all_gather(num_procs, num_active_procs, rank, vector_len,
 					   reduced_chunk, chunk_boundaries, reduced_vector);
+}
+
+
+// ===================
+// Recursive Doubling
+// ===================
+
+void recursive_double(const int num_procs, const int my_rank, const int vector_len,
+					  const std::map<int, int>& in_vector, int *reduced_vector) {
+	if (fmod(log2(num_procs), 1)) {
+		if (my_rank == 0)
+			std::cerr << "Error: recursive doubling requires the number of processors to be a power of two." << std::endl;
+		return;
+	}
+
+	// Initialize reduced_vector with in_vector
+	int next_index = 0;
+	for (const auto& elem : in_vector) {
+		for (int i = next_index; i < elem.first; i++) {
+			reduced_vector[i] = 0;
+		}
+		reduced_vector[elem.first] = elem.second;
+		next_index = elem.first + 1;
+	}
+	for (int i = next_index; i < vector_len; i++) {
+		reduced_vector[i] = 0;
+	}
+
+	// Perform recursive doubling
+    int* recv_data = new int[vector_len];
+	MPI_Request* requests = new MPI_Request[2];
+    for (int distance = 1; distance <= num_procs/2; distance *= 2) {
+		// Send and receive requests
+		int k = (my_rank + 1) % (distance * 2);
+		int dest_rank = (k <= distance && k != 0)
+			? my_rank + distance
+			: my_rank - distance;
+
+		MPI_Isend(reduced_vector, vector_len, MPI_INT, dest_rank, TAG_RECURSIVE_DOUBLE, MPI_COMM_WORLD, &requests[0]);
+		MPI_Irecv(recv_data, vector_len, MPI_INT, dest_rank, TAG_RECURSIVE_DOUBLE, MPI_COMM_WORLD, &requests[1]);
+		MPI_Waitall(2, requests, MPI_STATUSES_IGNORE);
+
+		// Reduce receieved data
+		for (int i = 0; i < vector_len; i++) {
+			reduced_vector[i] += recv_data[i];
+		}
+    }
+    delete recv_data;
+    delete requests;
+}
+
+
+// =================
+// Sparse Allreduce
+// =================
+
+void dist_sparse_all_reduce(const int num_procs, const int rank,
+							const int vector_len,
+							const std::map<int, int>& in_vector,
+							const char* distribution, const double dist_param,
+							int* reduced_vector) {
+	if (false) { // TODO: determine threshold for when to use recursive doubling
+		recursive_double(num_procs, rank, vector_len, in_vector, reduced_vector);
+	} else {
+		rabenseifner_algorithm(num_procs, rank, vector_len, in_vector, distribution, dist_param, reduced_vector);
+	}
 }
