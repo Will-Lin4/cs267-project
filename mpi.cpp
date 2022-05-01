@@ -24,42 +24,35 @@ std::vector<int> estimate_partition_boundaries(const int num_procs, const int ve
 	if (num_active_procs > in_vector.size())
 		num_active_procs = in_vector.size();
 
-	std::vector<int64_t> tmp_boundaries;
-	tmp_boundaries.reserve(num_active_procs + 1);
-	tmp_boundaries.emplace_back(0);
+	std::vector<int64_t> local_boundaries;
+	local_boundaries.reserve(num_active_procs + 1);
+	local_boundaries.emplace_back(0);
 
-	int chunk_size = in_vector.size() / num_active_procs;
+	double chunk_size = (double)in_vector.size() / (double)num_active_procs;
 
-	int i = 0;
+	int nnz = 0;
 	for (const auto& elem : in_vector) {
-		if (i >= chunk_size) {
-			tmp_boundaries.emplace_back(elem.first);
-			i = 0;
-
-			if (in_vector.size() % num_active_procs > 0
-					&& tmp_boundaries.size() == in_vector.size() % num_active_procs) {
-				chunk_size += 1;
-			}
+		if (nnz >= std::round(chunk_size * local_boundaries.size())) {
+			local_boundaries.emplace_back(elem.first);
 		}
-
-		i++;
+		nnz++;
 	}
 
-	if (tmp_boundaries.back() < vector_len)
-		tmp_boundaries.emplace_back(vector_len);
+	if (local_boundaries.back() < vector_len)
+		local_boundaries.emplace_back(vector_len);
 
-	int64_t* recv_buf = new int64_t[tmp_boundaries.size()];
-	MPI_Allreduce(tmp_boundaries.data(), recv_buf, tmp_boundaries.size(),
+	int64_t* recv_buf = new int64_t[local_boundaries.size()];
+	MPI_Allreduce(local_boundaries.data(), recv_buf, local_boundaries.size(),
 				  MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 
-	std::vector<int> boundaries;
-	boundaries.reserve(tmp_boundaries.size());
-	for (int i = 0; i < tmp_boundaries.size(); i++) {
+	std::vector<int> avg_boundaries;
+	avg_boundaries.reserve(local_boundaries.size());
+	for (int i = 0; i < local_boundaries.size(); i++) {
 		double avg = double(recv_buf[i]) / num_procs;
-		boundaries.emplace_back(avg + 0.5);
+		avg_boundaries.emplace_back(avg + 0.5);
 	}
 
-	return std::move(boundaries);
+	return std::move(avg_boundaries);
 }
 
 /* Probability mass function for various distributions */
@@ -520,7 +513,7 @@ void rabenseifner_algorithm(const int num_procs, const int rank,
 							const char* distribution, const double dist_param,
 							int* reduced_vector) {
 	std::vector<int> chunk_boundaries;
-	if (false && !strcmp(distribution, "unknown")) { // TODO: fix estimate_partition_boundaries
+	if (!strcmp(distribution, "unknown")) {
 		chunk_boundaries = estimate_partition_boundaries(num_procs, vector_len, in_vector);
 	} else {
 		chunk_boundaries = compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
@@ -531,10 +524,10 @@ void rabenseifner_algorithm(const int num_procs, const int rank,
 		reduce_scatter(num_procs, num_active_procs, rank,
 					   vector_len, in_vector, chunk_boundaries);
 
-	// dense_all_gather(num_procs, num_active_procs, rank, vector_len,
-	// 				 reduced_chunk, chunk_boundaries, reduced_vector);
+	//dense_all_gather(num_procs, num_active_procs, rank, vector_len,
+	//				 reduced_chunk, chunk_boundaries, reduced_vector);
 	//sparse_all_gather(num_procs, num_active_procs, rank, vector_len,
-	//				   reduced_chunk, chunk_boundaries, reduced_vector);
+	//				  reduced_chunk, chunk_boundaries, reduced_vector);
 	dynamic_all_gather(num_procs, num_active_procs, rank, vector_len,
 					   reduced_chunk, chunk_boundaries, reduced_vector);
 }
