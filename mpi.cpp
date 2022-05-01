@@ -476,10 +476,9 @@ void dynamic_all_gather(const int num_procs, const int num_active_procs,
 				rank += 1;
 
 			int recv_index = chunk_boundaries[rank] * 2 + rank;
-			int next_index = chunk_boundaries[rank];
-
 			if (recv_buffer[recv_index] == 0) {
 				// Sparse
+				int next_index = chunk_boundaries[rank];
 				for (int i = 1; i < recv_size; i += 2) {
 					int idx = recv_buffer[recv_index + i];
 					int val = recv_buffer[recv_index + i + 1];
