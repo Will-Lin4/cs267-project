@@ -510,7 +510,7 @@ void dist_sparse_all_reduce(const int num_procs, const int rank,
 							const char* distribution, const double dist_param,
 							int* reduced_vector) {
 	std::vector<int> chunk_boundaries;
-	if (!strcmp(distribution, "unknown")) {
+	if (false && !strcmp(distribution, "unknown")) { // TODO: fix estimate_partition_boundaries
 		chunk_boundaries = estimate_partition_boundaries(num_procs, vector_len, in_vector);
 	} else {
 		chunk_boundaries = compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
