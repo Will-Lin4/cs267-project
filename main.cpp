@@ -5,10 +5,6 @@
 #include <random>
 #include <mpi.h>
 
-// =================
-// Helper Functions
-// =================
-
 /* Command Line Option Processing */
 int find_arg_idx(int argc, char** argv, const char* option) {
 	for (int i = 1; i < argc; ++i) {
@@ -105,6 +101,7 @@ void display_sparse_vector(std::map<int, int>& vector, const int vector_len) {
 	std::cout << "]\n";
 }
 
+/* Displays dense vector */
 void display_dense_vector(int* vector, const int vector_len) {
 	std::cout << "[ ";
 	for (int i = 0; i < vector_len; i++) {
@@ -113,6 +110,7 @@ void display_dense_vector(int* vector, const int vector_len) {
 	std::cout << "]\n";
 }
 
+/* Returns true iff reduced_vector and correct_reduced_vector have the same elements */
 bool is_correct(int* reduced_vector, int* correct_reduced_vector, const int vector_len) {
 	for (int i = 0; i < vector_len; i++) {
 		if (reduced_vector[i] != correct_reduced_vector[i]) {
@@ -121,10 +119,6 @@ bool is_correct(int* reduced_vector, int* correct_reduced_vector, const int vect
 	}
 	return true;
 }
-
-// ==============
-// Main Function
-// ==============
 
 int main(int argc, char** argv) {
 	// Init MPI
@@ -139,7 +133,6 @@ int main(int argc, char** argv) {
 			std::cout << "Options:" << std::endl;
 			std::cout << "-h: see this help" << std::endl;
 			std::cout << "-c: perform correctness checks" << std::endl;
-			std::cout << "-naive: perform naive allreduce" << std::endl;
 			std::cout << "-r <int>: set random seed" << std::endl;
 			std::cout << "-n <int>: set vector length" << std::endl;
 			std::cout << "-s <double>: set sparsity" << std::endl;
@@ -174,11 +167,12 @@ int main(int argc, char** argv) {
 
 	// Perform Allreduce
 	auto start_time = std::chrono::steady_clock::now();
-	if (find_arg_idx(argc, argv, "-naive") >= 0)
-		naive_sparse_all_reduce(num_procs, rank, vector_len, in_vector, reduced_vector);
-	else
+	if (find_arg_idx(argc, argv, "-d") >= 0)
 		dist_sparse_all_reduce(num_procs, rank, vector_len, in_vector,
 							   distribution, dist_param, reduced_vector);
+	else
+		dist_sparse_all_reduce(num_procs, rank, vector_len, in_vector,
+							   "unknown", dist_param, reduced_vector);
 	MPI_Barrier(MPI_COMM_WORLD);
 	auto end_time = std::chrono::steady_clock::now();
 

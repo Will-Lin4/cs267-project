@@ -11,10 +11,8 @@
 #define TAG_ALL_GATHER 1
 #define EPSILON 0.0000001
 
-// =================
-// Helper Functions
-// =================
-
+/* Partitions {0,...,vector_len-1} into num_active_procs subsets of roughly equal
+   sparsity based on averaging distribution of nonzero elements across processors */
 std::vector<int> estimate_partition_boundaries(const int num_procs, const int vector_len,
 											   const std::map<int, int>& in_vector) {
 	int num_active_procs = num_procs;
@@ -59,6 +57,7 @@ std::vector<int> estimate_partition_boundaries(const int num_procs, const int ve
 	return std::move(boundaries);
 }
 
+/* Probability mass function for various distributions */
 double pmf (const int x, const char* distribution, const double dist_param) {
 	if (!strcmp(distribution, "uniform")) {
 		return 1/(double)dist_param;
@@ -73,7 +72,7 @@ double pmf (const int x, const char* distribution, const double dist_param) {
 	return (double)-1;
 }
 
-/* Partitions {0,...,vector_len-1} into num_procs subsets of roughly equal mass
+/* Partitions {0,...,vector_len-1} into num_active_procs subsets of roughly equal mass
    according to the probability mass function specified by the distribution */
 std::vector<int> compute_partition_boundaries(const int num_procs, const int vector_len,
 											  const char* distribution, const double dist_param) {
@@ -128,10 +127,6 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 
 	return std::move(chunk_boundaries);
 }
-
-// =================
-// Direct Allreduce
-// =================
 
 std::map<int, int> reduce_scatter(const int num_procs, const int num_active_procs,
 								  const int my_rank, const int vector_len,
@@ -514,11 +509,12 @@ void dist_sparse_all_reduce(const int num_procs, const int rank,
 							const std::map<int, int>& in_vector,
 							const char* distribution, const double dist_param,
 							int* reduced_vector) {
-	// std::vector<int> chunk_boundaries =
-	//	   estimate_partition_boundaries(num_procs, vector_len, in_vector);
-
-	std::vector<int> chunk_boundaries =
-		compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
+	std::vector<int> chunk_boundaries;
+	if (!strcmp(distribution, "unknown")) {
+		chunk_boundaries = estimate_partition_boundaries(num_procs, vector_len, in_vector);
+	} else {
+		chunk_boundaries = compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
+	}
 	int num_active_procs = chunk_boundaries.size() - 1;
 
 	std::map<int, int> reduced_chunk =
