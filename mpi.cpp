@@ -431,6 +431,7 @@ void dynamic_all_gather(const int num_procs, const int num_active_procs,
 			}
 
 			for (int i = next_index; i < chunk_boundaries[my_rank + 1]; i++) {
+				send_data.push_back(0);
 				reduced_vector[i] = 0;
 			}
 		}
