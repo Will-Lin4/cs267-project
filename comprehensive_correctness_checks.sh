@@ -48,7 +48,7 @@ fi
 num_fail=0
 for i in ${!commands[@]}; do
 	count="[$((i+1)) / ${#commands[@]}]"
-	cmd="${commands[$i]} -c"
+	cmd="${commands[$i]} -r $RANDOM -c"
 
 	echo "$count $cmd"
 	echo "$count $cmd" >> $output_file
