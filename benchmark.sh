@@ -77,3 +77,21 @@ done
 # 	done
 # 	printf '\n' >> $output_file
 # done
+
+# VARY SKEW
+# num_trials=1
+# #p=( 0.0000000001 0.000000001 0.00000001 0.0000001 0.000001 0.00001 0.0001 0.001 )
+# p=( 0.000000001 0.00000001 0.0000001 0.000001 0.00001 0.0001 )
+# for i in ${!p[@]}; do
+# 	count="[$((i+1)) / ${#p[@]}]"
+# 
+# 	cmd="srun -N 4 --ntasks-per-node=64 ./mpi -r 1729 -n 10000000 -s 0.01 -d geometric -p ${p[$i]}"
+# 
+# 	echo "$count $cmd"
+# 	echo "$count $cmd" >> $output_file
+# 	for i in $(seq 1 $num_trials); do
+# 		output=$(eval $cmd)
+# 		echo "$output" | tail -1 >> $output_file
+# 	done
+# 	printf '\n' >> $output_file
+# done
