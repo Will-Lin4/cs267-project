@@ -394,7 +394,7 @@ void dynamic_all_gather(const int num_procs, const int num_active_procs,
 	MPI_Allreduce(&do_dense_allgather, &total_dense_allgathers,
 				  1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-		if (total_dense_allgathers == num_active_procs) {
+	if (total_dense_allgathers == num_active_procs) {
 		dense_all_gather(num_procs, num_active_procs, my_rank, vector_len,
 						 reduced_chunk, chunk_boundaries, reduced_vector);
 		return;
