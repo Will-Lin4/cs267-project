@@ -71,17 +71,24 @@ int generate_vector(const int vector_len, const int num_procs, const int rank,
 	std::mt19937 gen(random_seed * 1000 + rank);
 	std::uniform_int_distribution<> value_generator(0, 1024);
 
+	int geometric_start = 0;
 	int nz_count = 0, nz_target = std::round(sparsity * vector_len);
 	while (nz_count < nz_target) {
 		int idx;
 		if (!strcmp(distribution, "uniform")) idx = uniform(gen);
-		else if (!strcmp(distribution, "geometric")) idx = geometric(gen);
+		else if (!strcmp(distribution, "geometric")) idx = geometric_start + geometric(gen);
 		else if (!strcmp(distribution, "poisson")) idx = poisson(gen);
 		else { std::cerr << "Distribution '" << distribution << "' not found\n"; return -1; }
 
 		if (idx < vector_len && !vector.count(idx)) {
 			vector.emplace(idx, value_generator(gen));
 			nz_count++;
+
+			if (!strcmp(distribution, "geometric")) {
+				while (vector.count(geometric_start)) {
+					geometric_start += 1;
+				}
+			}
 		}
 	}
 
