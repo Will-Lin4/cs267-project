@@ -10,7 +10,7 @@
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
 #define TAG_RECURSIVE_DOUBLE 2
-#define EPSILON 0.0000001
+#define EPSILON 0
 
 // =================
 // Helper Functions
