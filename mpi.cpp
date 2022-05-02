@@ -222,7 +222,7 @@ std::map<int, int> reduce_scatter(const int num_procs, const int num_active_proc
 void sparse_all_gather(const int num_procs, const int num_active_procs,
 					   const int my_rank, const int vector_len,
 					   const std::map<int, int>& reduced_chunk,
-					   const std::vector<int> chunk_boundaries,
+					   const std::vector<int>& chunk_boundaries,
 					   int* reduced_vector) {
 	std::vector<MPI_Request> all_requests;
 	all_requests.reserve(num_active_procs * 2); // Both send and recv
@@ -314,7 +314,7 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
 void dense_all_gather(const int num_procs, const int num_active_procs,
 					  const int my_rank, const int vector_len,
 					  const std::map<int, int>& reduced_chunk,
-					  const std::vector<int> chunk_boundaries,
+					  const std::vector<int>& chunk_boundaries,
 					  int* reduced_vector) {
 	std::vector<MPI_Request> all_requests;
 	all_requests.reserve(num_active_procs * 2); // Both send and recv
@@ -376,10 +376,30 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 }
 
 void dynamic_all_gather(const int num_procs, const int num_active_procs,
-					   const int my_rank, const int vector_len,
-					   const std::map<int, int>& reduced_chunk,
-					   const std::vector<int> chunk_boundaries,
-					   int* reduced_vector) {
+					    const int my_rank, const int vector_len,
+					    const std::map<int, int>& reduced_chunk,
+					    const std::vector<int>& chunk_boundaries,
+					    int* reduced_vector) {
+	int do_dense_allgather = 0;
+	if (my_rank < num_active_procs) {
+		size_t my_chunk_size =
+			chunk_boundaries[my_rank + 1] - chunk_boundaries[my_rank];
+
+		if (reduced_chunk.size() * 2 > my_chunk_size) {
+			do_dense_allgather += 1;
+		}
+	}
+
+	int total_dense_allgathers = 0;
+	MPI_Allreduce(&do_dense_allgather, &total_dense_allgathers,
+				  1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+		if (total_dense_allgathers == num_active_procs) {
+		dense_all_gather(num_procs, num_active_procs, my_rank, vector_len,
+						 reduced_chunk, chunk_boundaries, reduced_vector);
+		return;
+	}
+
 	std::vector<MPI_Request> all_requests;
 	all_requests.reserve(num_active_procs * 2); // Both send and recv
 
