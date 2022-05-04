@@ -11,7 +11,7 @@
 #define TAG_ALL_GATHER 1
 #define TAG_RECURSIVE_DOUBLE 2
 #define EPSILON 0
-#define RECURSIVE_DOUBLE_THRESHOLD 1 << 6
+#define RECURSIVE_DOUBLE_THRESHOLD 1 << 18
 
 // =================
 // Helper Functions
