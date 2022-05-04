@@ -9,80 +9,54 @@
 
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
-#define EPSILON 0.0000001
+#define TAG_RECURSIVE_DOUBLE 2
+#define EPSILON 0
+#define RECURSIVE_DOUBLE_THRESHOLD 1 << 6
 
 // =================
 // Helper Functions
 // =================
 
-void display_sparse_vector_m(std::map<int, int>& vector, const int vector_len, int rank) {
-	std::cout << "Sending Vector" << std::endl;
-	std::cout << "Rank: " << rank << std::endl;
-	std::cout << "[ ";
-	for (int i = 0; i < vector_len; i++) {
-		if (vector.count(i)) {
-			std::cout << vector[i] << ' ';
-		} else {
-			std::cout << "0 ";
-		}
-	}
-	std::cout << "]\n";
-}
-
-void display_dense_vector_m(int* vector, const int vector_len, int rank) {
-	std::cout << "Received Vector" << std::endl;
-	std::cout << "Rank: " << rank << std::endl;
-	std::cout << "[ ";
-	for (int i = 0; i < vector_len; i++) {
-		std::cout << vector[i] << ' ';
-	}
-	std::cout << "]\n";
-}
-
+/* Partitions {0,...,vector_len-1} into num_active_procs subsets of roughly equal
+   sparsity based on averaging distribution of nonzero elements across processors */
 std::vector<int> estimate_partition_boundaries(const int num_procs, const int vector_len,
 											   const std::map<int, int>& in_vector) {
 	int num_active_procs = num_procs;
 	if (num_active_procs > in_vector.size())
 		num_active_procs = in_vector.size();
 
-	std::vector<int64_t> tmp_boundaries;
-	tmp_boundaries.reserve(num_active_procs + 1);
-	tmp_boundaries.emplace_back(0);
+	std::vector<int64_t> local_boundaries;
+	local_boundaries.reserve(num_active_procs + 1);
+	local_boundaries.emplace_back(0);
 
-	int chunk_size = in_vector.size() / num_active_procs;
+	double chunk_size = (double)in_vector.size() / (double)num_active_procs;
 
-	int i = 0;
+	int nnz = 0;
 	for (const auto& elem : in_vector) {
-		if (i >= chunk_size) {
-			tmp_boundaries.emplace_back(elem.first);
-			i = 0;
-
-			if (in_vector.size() % num_active_procs > 0
-					&& tmp_boundaries.size() == in_vector.size() % num_active_procs) {
-				chunk_size += 1;
-			}
+		if (nnz >= std::round(chunk_size * local_boundaries.size())) {
+			local_boundaries.emplace_back(elem.first);
 		}
-
-		i++;
+		nnz++;
 	}
 
-	if (tmp_boundaries.back() < vector_len)
-		tmp_boundaries.emplace_back(vector_len);
+	if (local_boundaries.back() < vector_len)
+		local_boundaries.emplace_back(vector_len);
 
-	int64_t* recv_buf = new int64_t[tmp_boundaries.size()];
-	MPI_Allreduce(tmp_boundaries.data(), recv_buf, tmp_boundaries.size(),
+	int64_t* recv_buf = new int64_t[local_boundaries.size()];
+	MPI_Allreduce(local_boundaries.data(), recv_buf, local_boundaries.size(),
 				  MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 
-	std::vector<int> boundaries;
-	boundaries.reserve(tmp_boundaries.size());
-	for (int i = 0; i < tmp_boundaries.size(); i++) {
+	std::vector<int> avg_boundaries;
+	avg_boundaries.reserve(local_boundaries.size());
+	for (int i = 0; i < local_boundaries.size(); i++) {
 		double avg = double(recv_buf[i]) / num_procs;
-		boundaries.emplace_back(avg + 0.5);
+		avg_boundaries.emplace_back(avg + 0.5);
 	}
 
-	return std::move(boundaries);
+	return std::move(avg_boundaries);
 }
 
+/* Probability mass function for various distributions */
 double pmf (const int x, const char* distribution, const double dist_param) {
 	if (!strcmp(distribution, "uniform")) {
 		return 1/(double)dist_param;
@@ -97,7 +71,7 @@ double pmf (const int x, const char* distribution, const double dist_param) {
 	return (double)-1;
 }
 
-/* Partitions {0,...,vector_len-1} into num_procs subsets of roughly equal mass
+/* Partitions {0,...,vector_len-1} into num_active_procs subsets of roughly equal mass
    according to the probability mass function specified by the distribution */
 std::vector<int> compute_partition_boundaries(const int num_procs, const int vector_len,
 											  const char* distribution, const double dist_param) {
@@ -153,116 +127,10 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 	return std::move(chunk_boundaries);
 }
 
-/* Modulus operator without a negative output */
-long factorial(const int n) {
-    long f = 1;
-    for (int i = 2; i <= n; i++)
-        f *= i;
-    return f;
-}
 
-/* Populates a vector with the contents of a map */
-void map_to_vector(const std::map<int, int>& m, std::vector<int>& v) {
-
-    for (auto i = m.begin(); i != m.end(); ++i) {
-        v[i->first] = i->second; 
-    }
-
-}
-
-/* Populates a map with the contents of a vector */
-void vector_to_map(std::map<int, int>& m, std::vector<int>& v) {
-    for (int i=0; i<v.size(); ++i) {
-        m[i] = v[i];
-    }
-}
-
-/* Populates a map with the contents of an array */
-void array_to_map(int *v, int n, std::map<int, int>& m) {
-    
-    for (int i = 0; i < n; ++i) {
-        m[i] = v[i];
-    }
-
-}
-
-// ===================
-// Recursive Doubling
-// ===================
-
-/* Main recursive doubling operation */
-void do_recursive_double(std::map<int, int>& vector, int *recv_data, 
-                         const int rank, const int num_procs, const int n,
-                         const int limit, const int distance) {
-	//Error if num_procs is not a power of two or if it's less than 1
-	if (fmod(log2(num_procs), 1) || num_procs < 1)
-		std::cout << "Error: recursive doubling should only be done when the number of processors is a power of two." << std::endl;
-
-    MPI_Request r1;
-    MPI_Request r2;
-
-    //Populate send_data
-    int *send_data = new int[n];
-    int idx = 0;
-
-    for (auto i = vector.begin(); i != vector.end(); ++i) {
-        send_data[i->first] = i->second;
-    }
-	
-
-    //Send and receive requests
-    if ( ((rank + 1) % (distance * 2)) <= distance && ((rank + 1) % (distance * 2)) ) { 
-        MPI_Isend(send_data, n, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &r2);
-        MPI_Irecv(recv_data, n, MPI_INT, rank+distance, NULL, MPI_COMM_WORLD, &r1);
-    } else {
-        MPI_Isend(send_data, n, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &r2);
-        MPI_Irecv(recv_data, n, MPI_INT, rank-distance, NULL, MPI_COMM_WORLD, &r1);
-    }
-    MPI_Wait(&r1, MPI_STATUSES_IGNORE);
-
-    
-    //operate on receieved data
-    for (int i =0; i < n; i+=1) {
-        vector[i] += recv_data[i];
-    }
-
-}
-
-
-/* Recursive doubling loop */
-void recursive_double(std::map<int, int>& in_vector, 
-                      int *reduced_vector, const int num_procs, 
-                      const int rank, const int vector_len) {
-
-    int distance = 1;
-    int limit = num_procs/2;
-    int *recv_data = new int[vector_len]; 
-    std::map<int, int> reduced_map;
-
-    //Copy to reduced map
-    for (auto i = in_vector.begin(); i != in_vector.end(); ++i) {
-        reduced_map[i->first] = i->second;
-    }
-
-    //Main loop
-    while (distance <= limit) {
-        do_recursive_double(reduced_map, recv_data, rank, num_procs, vector_len, limit, distance);
-        distance *= 2;
-    }
-
-    //Copy to reduced vector
-    for (auto i = reduced_map.begin(); i != reduced_map.end(); ++i) {
-        reduced_vector[i->first] = i->second;
-    }
-
-
-    delete recv_data;
-}
-
-
-// =================
-// Direct Allreduce
-// =================
+// =========================
+// Rabenseifner's Algorithm
+// =========================
 
 std::map<int, int> reduce_scatter(const int num_procs, const int num_active_procs,
 								  const int my_rank, const int vector_len,
@@ -355,7 +223,7 @@ std::map<int, int> reduce_scatter(const int num_procs, const int num_active_proc
 void sparse_all_gather(const int num_procs, const int num_active_procs,
 					   const int my_rank, const int vector_len,
 					   const std::map<int, int>& reduced_chunk,
-					   const std::vector<int> chunk_boundaries,
+					   const std::vector<int>& chunk_boundaries,
 					   int* reduced_vector) {
 	std::vector<MPI_Request> all_requests;
 	all_requests.reserve(num_active_procs * 2); // Both send and recv
@@ -421,19 +289,21 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
 				rank += 1;
 
 			int vector_index = chunk_boundaries[rank] * 2;
-			int next_index = chunk_boundaries[rank + 1] - 1;
+			int next_index = chunk_boundaries[rank];
 
-			for (int i = recv_size - 2; i >= 0; i -= 2) {
+			for (int i = 0; i < recv_size; i += 2) {
 				int idx = recv_buffer[vector_index + i];
 				int val = recv_buffer[vector_index + i + 1];
 
-				for (int j = next_index; j > idx; j--) {
+				for (int j = next_index; j < idx; j++) {
 					reduced_vector[j] = 0;
 				}
+
 				reduced_vector[idx] = val;
-				next_index = idx - 1;
+				next_index = idx + 1;
 			}
-			for (int i = next_index; i >= chunk_boundaries[rank]; i--) {
+
+			for (int i = next_index; i < chunk_boundaries[rank + 1]; i++) {
 				reduced_vector[i] = 0;
 			}
 		}
@@ -445,7 +315,7 @@ void sparse_all_gather(const int num_procs, const int num_active_procs,
 void dense_all_gather(const int num_procs, const int num_active_procs,
 					  const int my_rank, const int vector_len,
 					  const std::map<int, int>& reduced_chunk,
-					  const std::vector<int> chunk_boundaries,
+					  const std::vector<int>& chunk_boundaries,
 					  int* reduced_vector) {
 	std::vector<MPI_Request> all_requests;
 	all_requests.reserve(num_active_procs * 2); // Both send and recv
@@ -468,6 +338,7 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 			reduced_vector[elem.first] = elem.second;
 			next_index = elem.first + 1;
 		}
+
 		for (int i = next_index; i < chunk_boundaries[my_rank + 1]; i++) {
 			send_buffer[i - chunk_boundaries[my_rank]] = 0;
 			reduced_vector[i] = 0;
@@ -486,7 +357,6 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 	size_t num_send = all_requests.size();
 
 	// Read reduced chunks from all active processors
-	int* recv_buffer = new int[vector_len];
 	for (int rank = 0; rank < num_active_procs; rank++) {
 		if (rank == my_rank) {
 			continue;
@@ -495,9 +365,121 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 		size_t chunk_size = chunk_boundaries[rank + 1] - chunk_boundaries[rank];
 
 		all_requests.emplace_back();
-		MPI_Irecv(recv_buffer + chunk_boundaries[rank], chunk_size,
+		MPI_Irecv(reduced_vector + chunk_boundaries[rank], chunk_size,
 				  MPI_INT, rank, TAG_ALL_GATHER, MPI_COMM_WORLD,
 				  &all_requests.back());
+	}
+
+	MPI_Waitall(all_requests.size(), all_requests.data(), MPI_STATUSES_IGNORE);
+
+	if (send_buffer)
+		delete send_buffer;
+}
+
+void dynamic_all_gather(const int num_procs, const int num_active_procs,
+					    const int my_rank, const int vector_len,
+					    const std::map<int, int>& reduced_chunk,
+					    const std::vector<int>& chunk_boundaries,
+					    int* reduced_vector) {
+	int do_dense_allgather = 0;
+	if (my_rank < num_active_procs) {
+		size_t my_chunk_size =
+			chunk_boundaries[my_rank + 1] - chunk_boundaries[my_rank];
+
+		if (reduced_chunk.size() * 2 > my_chunk_size) {
+			do_dense_allgather += 1;
+		}
+	}
+
+	int total_dense_allgathers = 0;
+	MPI_Allreduce(&do_dense_allgather, &total_dense_allgathers,
+				  1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+	if (total_dense_allgathers == num_active_procs) {
+		dense_all_gather(num_procs, num_active_procs, my_rank, vector_len,
+						 reduced_chunk, chunk_boundaries, reduced_vector);
+		return;
+	}
+
+	std::vector<MPI_Request> all_requests;
+	all_requests.reserve(num_active_procs * 2); // Both send and recv
+
+	// Send reduced_chunk to all other processors
+	std::vector<int> send_data;
+	if (my_rank < num_active_procs) {
+		size_t my_chunk_size =
+			chunk_boundaries[my_rank + 1] - chunk_boundaries[my_rank];
+
+		if (reduced_chunk.size() * 2 < my_chunk_size) {
+			// Sparse
+			send_data.reserve(1 + 2 * reduced_chunk.size());
+			send_data.push_back(0);
+
+			int next_index = chunk_boundaries[my_rank];
+			for (const auto& elem : reduced_chunk) {
+				send_data.push_back(elem.first);
+				send_data.push_back(elem.second);
+
+				for (int i = next_index; i < elem.first; i++) {
+					reduced_vector[i] = 0;
+				}
+
+				reduced_vector[elem.first] = elem.second;
+				next_index = elem.first + 1;
+			}
+
+			for (int i = next_index; i < chunk_boundaries[my_rank + 1]; i++) {
+				reduced_vector[i] = 0;
+			}
+
+		} else {
+			// Dense
+			send_data.reserve(1 + my_chunk_size);
+			send_data.push_back(1);
+
+			int next_index = chunk_boundaries[my_rank];
+			for (const auto& elem : reduced_chunk) {
+				for (int i = next_index; i < elem.first; i++) {
+					send_data.push_back(0);
+					reduced_vector[i] = 0;
+				}
+
+				send_data.push_back(elem.second);
+				reduced_vector[elem.first] = elem.second;
+				next_index = elem.first + 1;
+			}
+
+			for (int i = next_index; i < chunk_boundaries[my_rank + 1]; i++) {
+				send_data.push_back(0);
+				reduced_vector[i] = 0;
+			}
+		}
+
+		for (int rank = 0; rank < num_procs; rank++) {
+			if (rank == my_rank)
+				continue;
+
+			all_requests.emplace_back();
+			MPI_Isend(send_data.data(), send_data.size(), MPI_INT, rank,
+					  TAG_ALL_GATHER, MPI_COMM_WORLD, &all_requests.back());
+		}
+	}
+
+	size_t num_send = all_requests.size();
+
+	// Read reduced chunks from all active processors
+	int* recv_buffer = new int[num_procs + 2 * vector_len];
+	for (int rank = 0; rank < num_active_procs; rank++) {
+		if (rank == my_rank) {
+			continue;
+		}
+
+		size_t chunk_size = chunk_boundaries[rank + 1] - chunk_boundaries[rank];
+
+		all_requests.emplace_back();
+		MPI_Irecv(recv_buffer + chunk_boundaries[rank] * 2 + rank,
+				  2 * chunk_size + 1, MPI_INT, rank, TAG_ALL_GATHER,
+				  MPI_COMM_WORLD, &all_requests.back());
 	}
 
 	int index = -1;
@@ -513,46 +495,126 @@ void dense_all_gather(const int num_procs, const int num_active_procs,
 			if (rank >= my_rank)
 				rank += 1;
 
-			int vector_index = chunk_boundaries[rank];
+			int recv_index = chunk_boundaries[rank] * 2 + rank;
+			if (recv_buffer[recv_index] == 0) {
+				// Sparse
+				int next_index = chunk_boundaries[rank];
+				for (int i = 1; i < recv_size; i += 2) {
+					int idx = recv_buffer[recv_index + i];
+					int val = recv_buffer[recv_index + i + 1];
 
-			for (int i = recv_size - 1; i >= 0; i--) {
-				int idx = vector_index + i;
-				int val = recv_buffer[vector_index + i];
-				reduced_vector[idx] = val;
+					for (int j = next_index; j < idx; j++) {
+						reduced_vector[j] = 0;
+					}
+
+					reduced_vector[idx] = val;
+					next_index = idx + 1;
+				}
+
+				for (int i = next_index; i < chunk_boundaries[rank + 1]; i++) {
+					reduced_vector[i] = 0;
+				}
+			} else {
+				// Dense
+				for (int i = 1; i < recv_size; i++) {
+					int idx = chunk_boundaries[rank] + i - 1;
+					int val = recv_buffer[recv_index + i];
+					reduced_vector[idx] = val;
+				}
 			}
 		}
 	}
 
-	if (send_buffer)
-		delete send_buffer;
 	delete recv_buffer;
 }
+
+void rabenseifner_algorithm(const int num_procs, const int rank,
+							const int vector_len,
+							const std::map<int, int>& in_vector,
+							const char* distribution, const double dist_param,
+							int* reduced_vector) {
+	std::vector<int> chunk_boundaries;
+	if (!strcmp(distribution, "unknown")) {
+		chunk_boundaries = estimate_partition_boundaries(num_procs, vector_len, in_vector);
+	} else {
+		chunk_boundaries = compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
+	}
+	int num_active_procs = chunk_boundaries.size() - 1;
+
+	std::map<int, int> reduced_chunk =
+		reduce_scatter(num_procs, num_active_procs, rank,
+					   vector_len, in_vector, chunk_boundaries);
+
+	//dense_all_gather(num_procs, num_active_procs, rank, vector_len,
+	//				 reduced_chunk, chunk_boundaries, reduced_vector);
+	//sparse_all_gather(num_procs, num_active_procs, rank, vector_len,
+	//				  reduced_chunk, chunk_boundaries, reduced_vector);
+	dynamic_all_gather(num_procs, num_active_procs, rank, vector_len,
+					   reduced_chunk, chunk_boundaries, reduced_vector);
+}
+
+
+// ===================
+// Recursive Doubling
+// ===================
+
+void recursive_double(const int num_procs, const int my_rank, const int vector_len,
+					  const std::map<int, int>& in_vector, int *reduced_vector) {
+	if (fmod(log2(num_procs), 1)) {
+		if (my_rank == 0)
+			std::cerr << "Error: recursive doubling requires the number of processors to be a power of two." << std::endl;
+		return;
+	}
+
+	// Initialize reduced_vector with in_vector
+	int next_index = 0;
+	for (const auto& elem : in_vector) {
+		for (int i = next_index; i < elem.first; i++) {
+			reduced_vector[i] = 0;
+		}
+		reduced_vector[elem.first] = elem.second;
+		next_index = elem.first + 1;
+	}
+	for (int i = next_index; i < vector_len; i++) {
+		reduced_vector[i] = 0;
+	}
+
+	// Perform recursive doubling
+    int* recv_data = new int[vector_len];
+	MPI_Request* requests = new MPI_Request[2];
+    for (int distance = 1; distance <= num_procs/2; distance *= 2) {
+		// Send and receive requests
+		int k = (my_rank + 1) % (distance * 2);
+		int dest_rank = (k <= distance && k != 0)
+			? my_rank + distance
+			: my_rank - distance;
+
+		MPI_Isend(reduced_vector, vector_len, MPI_INT, dest_rank, TAG_RECURSIVE_DOUBLE, MPI_COMM_WORLD, &requests[0]);
+		MPI_Irecv(recv_data, vector_len, MPI_INT, dest_rank, TAG_RECURSIVE_DOUBLE, MPI_COMM_WORLD, &requests[1]);
+		MPI_Waitall(2, requests, MPI_STATUSES_IGNORE);
+
+		// Reduce receieved data
+		for (int i = 0; i < vector_len; i++) {
+			reduced_vector[i] += recv_data[i];
+		}
+    }
+    delete recv_data;
+    delete requests;
+}
+
+
+// =================
+// Sparse Allreduce
+// =================
 
 void dist_sparse_all_reduce(const int num_procs, const int rank,
 							const int vector_len,
 							const std::map<int, int>& in_vector,
 							const char* distribution, const double dist_param,
 							int* reduced_vector) {
-	// std::vector<int> chunk_boundaries =
-	//	   estimate_partition_boundaries(num_procs, vector_len, in_vector);
-	std::vector<int> chunk_boundaries =
-		compute_partition_boundaries(num_procs, vector_len, distribution, dist_param);
-	int num_active_procs = chunk_boundaries.size() - 1;
-
-	// if (rank == 0) {
-	// 	std::cout << '[' << num_active_procs << "]";
-	// 	for (const auto x : chunk_boundaries) {
-	// 		std::cout << ' ' << x;
-	// 	}
-	// 	std::cout << '\n';
-	// }
-
-	std::map<int, int> reduced_chunk =
-		reduce_scatter(num_procs, num_active_procs, rank,
-					   vector_len, in_vector, chunk_boundaries);
-
-	dense_all_gather(num_procs, num_active_procs, rank, vector_len,
-	 				 reduced_chunk, chunk_boundaries, reduced_vector);
-	//sparse_all_gather(num_procs, num_active_procs, rank, vector_len,
-	//				  reduced_chunk, chunk_boundaries, reduced_vector);
+	if (vector_len <= RECURSIVE_DOUBLE_THRESHOLD && !strcmp(distribution, "uniform")) { 
+		recursive_double(num_procs, rank, vector_len, in_vector, reduced_vector);
+	} else {
+		rabenseifner_algorithm(num_procs, rank, vector_len, in_vector, distribution, dist_param, reduced_vector);
+	}
 }
