@@ -604,7 +604,7 @@ void dist_sparse_all_reduce(const int num_procs, const int rank,
 							const std::map<int, int>& in_vector,
 							const char* distribution, const double dist_param,
 							int* reduced_vector) {
-	if (vector_len <= RECURSIVE_DOUBLE_THRESHOLD && !strcmp(distribution, "uniform")) {
+	if (!fmod(log2(num_procs), 1) && vector_len <= RECURSIVE_DOUBLE_THRESHOLD) {
 		recursive_double(num_procs, rank, vector_len, in_vector, reduced_vector);
 	} else {
 		rabenseifner_algorithm(num_procs, rank, vector_len, in_vector, distribution, dist_param, reduced_vector);
