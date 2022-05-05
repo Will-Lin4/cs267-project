@@ -93,7 +93,7 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 		}
 
 		int rank = 1;
-		double mass = 0;
+		double mass = 0, cum_mass = 0;
 		const double uniform_mass = 1/(double)num_procs;
 		chunk_boundaries.push_back(0);
 		for (int idx = 0; idx < vector_len - 1; idx++) {
@@ -101,6 +101,7 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 			probability mass is at least uniform mass */
 			double dmass = pmf(idx, distribution, dist_param) / total_mass;
 			mass += dmass;
+			cum_mass += dmass;
 			if (mass >= uniform_mass) {
 				chunk_boundaries.push_back(idx + 1);
 				rank++;
@@ -109,6 +110,8 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 
 			if (rank == num_procs)
 				break; // stop after last processor's chunk is determined
+			if (total_mass - cum_mass < uniform_mass - mass)
+				break; // stop once remaining mass is less than the amount required for another partition
 		}
 		chunk_boundaries.push_back(vector_len); // for convenience, so chunks[i+1] always exists
 	}
