@@ -10,7 +10,6 @@
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
 #define TAG_RECURSIVE_DOUBLE 2
-#define EPSILON 0
 #define RECURSIVE_DOUBLE_THRESHOLD (1 << 18)
 
 // =================
@@ -84,13 +83,6 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 			chunk_boundaries.push_back(idx);
 		}
 	} else {
-		double mu;
-		if (!strcmp(distribution, "geometric")) {
-			mu = (1 - dist_param) / dist_param;
-		} else if (!strcmp(distribution, "poisson")) {
-			mu = dist_param;
-		}
-
 		double total_mass = 0;
 		for (int i = 0; i < vector_len; i++) {
 			total_mass += pmf(i, distribution, dist_param);
@@ -109,7 +101,7 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 			probability mass is at least uniform mass */
 			double dmass = pmf(idx, distribution, dist_param) / total_mass;
 			mass += dmass;
-			if (mass >= uniform_mass - EPSILON) {
+			if (mass >= uniform_mass) {
 				chunk_boundaries.push_back(idx + 1);
 				rank++;
 				mass = 0;
@@ -117,9 +109,6 @@ std::vector<int> compute_partition_boundaries(const int num_procs, const int vec
 
 			if (rank == num_procs)
 				break; // stop after last processor's chunk is determined
-
-			if (idx > mu && dmass < EPSILON)
-				break; // stop prematurely if at tail end of distribution
 		}
 		chunk_boundaries.push_back(vector_len); // for convenience, so chunks[i+1] always exists
 	}
