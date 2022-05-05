@@ -10,7 +10,7 @@
 #define TAG_REDUCE_SCATTER 0
 #define TAG_ALL_GATHER 1
 #define TAG_RECURSIVE_DOUBLE 2
-#define RECURSIVE_DOUBLE_THRESHOLD (1 << 18)
+#define RECURSIVE_DOUBLE_THRESHOLD (1 << 16)
 
 // =================
 // Helper Functions
