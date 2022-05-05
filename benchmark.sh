@@ -13,20 +13,14 @@ fi
 
 # VARY VECTOR LENGTH
 # max_pow=24
-# num_trials=5
-# command='srun -n 68 ./mpi -s 0.01'
+# num_trials=3
 # for i in $(seq 1 $max_pow); do
 # 	count="[$i / $max_pow]"
 # 	n=$(echo "2^$i" | bc)
+# 	#cmd="srun -n 256 ./mpi -d uniform -r 1729 -s 0.01 -n $n"
+# 	cmd="srun -n 64 ./mpi -d uniform -r 1729 -s 0.001 -n $n"
 
-# 	if [[ $output_file == "benchmark_naive.out" ]]; then
-# 		cmd="$command -n $n -naive"
-# 	else
-# 		cmd="$command -n $n"
-# 	fi
-
-# 	echo "$count $cmd"
-# 	echo "$count $cmd" >> $output_file
+# 	echo "$count $cmd" | tee -a $output_file
 # 	for i in $(seq 1 $num_trials); do
 # 		output=$(eval $cmd)
 # 		echo "$output" | tail -1 >> $output_file
@@ -36,16 +30,13 @@ fi
 
 # VARY PROCESSOR COUNT (uniform + geometric distribution)
 num_trials=3
-processors=( 1 2 4 8 12 16 24 32 40 48 54 62 68 )
+processors=( 1 2 4 8 16 32 48 64 96 128 160 192 256 )
 for i in ${!processors[@]}; do
 	count="[$((i+1)) / ${#processors[@]}]"
+	cmd="srun -n ${processors[$i]} ./mpi -d geometric -r 1729 -n 16777216 -s 0.001 -p 0.0001"
+	#cmd="srun -n ${processors[$i]} ./mpi -d uniform -r 1729 -n 16777216 -s 0.001"
 
-	#cmd="srun -n ${processors[$i]} ./mpi -d geometric -r 1729 -n 16777216 -s 0.01 -p 0.00001"
-	cmd="srun -n ${processors[$i]} ./mpi -d geometric -r 1729 -n 524288 -s 0.5 -p 0.00001"
-	#cmd="srun -n ${processors[$i]} ./mpi -d uniform -r 1729 -n 16777216 -s 0.01"
-
-	echo "$count $cmd"
-	echo "$count $cmd" >> $output_file
+	echo "$count $cmd" | tee -a $output_file
 	for i in $(seq 1 $num_trials); do
 		output=$(eval $cmd)
 		echo "$output" | tail -1 >> $output_file
@@ -54,14 +45,13 @@ for i in ${!processors[@]}; do
 done
 
 # VARY DENSITY
-# num_trials=5
-# sparsity=( 0.0002 0.0004 0.0008 0.0012 0.0016 0.0024 0.0032 0.0064 0.0128 )
+# num_trials=3
+# sparsity=( 0.0001 0.0002 0.0004 0.0008 0.0012 0.0016 0.0024 0.0032 0.0064 0.0128 0.0256 0.0512 0.1024 0.2048 )
 # for i in ${!sparsity[@]}; do
 # 	count="[$((i+1)) / ${#sparsity[@]}]"
-# 	cmd="srun -n 256 ./mpi -r 1729 -d uniform -n 16777216 -s ${sparsity[$i]}"
+# 	cmd="srun -n 64 ./mpi -r 1729 -d uniform -n 16777216 -s ${sparsity[$i]}"
 
-# 	echo "$count $cmd"
-# 	echo "$count $cmd" >> $output_file
+# 	echo "$count $cmd" | tee -a $output_file
 # 	for i in $(seq 1 $num_trials); do
 # 		output=$(eval $cmd)
 # 		echo "$output" | tail -1 >> $output_file
@@ -78,8 +68,7 @@ done
 # 
 # 	cmd="srun -N 4 --ntasks-per-node=64 ./mpi -r 1729 -n 10000000 -s 0.01 -d geometric -p ${p[$i]}"
 # 
-# 	echo "$count $cmd"
-# 	echo "$count $cmd" >> $output_file
+# 	echo "$count $cmd" | tee -a $output_file
 # 	for i in $(seq 1 $num_trials); do
 # 		output=$(eval $cmd)
 # 		echo "$output" | tail -1 >> $output_file
