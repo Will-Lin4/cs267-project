@@ -1,14 +1,5 @@
 #!/bin/bash
 
-# INSTRUCTIONS:
-# 0. For each run below, do it three times for:
-#    (1) dense (2) sparse (3) dynamic allgather [lines 527-532 in mpi.cpp]
-# 1. Run VARY PROCESSOR COUNT section for each of three command ("cmd") types
-#    [line 47: geometric, 1% density]
-#    [line 48: geometric, 50% density]
-#    [line 49: uniform, 1% density]
-# 2. Run VARY DENSITY section
-
 # confirm overwriting $output_file if already exists
 output_file='benchmark.out'
 if [ -f $output_file ]; then
